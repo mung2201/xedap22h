@@ -1,0 +1,29 @@
+import { Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
+import { MongooseModule } from '@nestjs/mongoose';
+import { PassportModule } from '@nestjs/passport';
+import { MailModule } from '../mail/mail.module';
+import { UsersModule } from '../users/users.module';
+import { AuthController } from './auth.controller';
+import { AuthService } from './auth.service';
+import {
+  RefreshToken,
+  RefreshTokenSchema,
+} from './schemas/refresh-token.schema';
+import { JwtAccessStrategy } from './strategies/jwt-access.strategy';
+
+@Module({
+  imports: [
+    UsersModule,
+    MailModule,
+    PassportModule,
+    JwtModule.register({}),
+    MongooseModule.forFeature([
+      { name: RefreshToken.name, schema: RefreshTokenSchema },
+    ]),
+  ],
+  controllers: [AuthController],
+  providers: [AuthService, JwtAccessStrategy],
+  exports: [AuthService],
+})
+export class AuthModule {}

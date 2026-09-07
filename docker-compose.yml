@@ -1,0 +1,23 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: bike-store-mongo
+    restart: unless-stopped
+    ports:
+      # Local development only: do not expose an unauthenticated MongoDB
+      # instance to the LAN by default.
+      - "127.0.0.1:${MONGO_PORT:-27017}:27017"
+    environment:
+      MONGO_INITDB_DATABASE: bike_store
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    volumes:
+      - mongo_data:/data/db
+      - ./docker/mongo/init-replica.js:/docker-entrypoint-initdb.d/init-replica.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mongo_data:

@@ -1,0 +1,14 @@
+export enum ServiceBookingType {
+  MAINTENANCE = 'MAINTENANCE',
+  REPAIR = 'REPAIR',
+  ASSEMBLY = 'ASSEMBLY',
+  BIKE_FIT = 'BIKE_FIT',
+}
+
+export enum ServiceBookingStatus {
+  PENDING = 'PENDING',
+  CONFIRMED = 'CONFIRMED',
+  IN_PROGRESS = 'IN_PROGRESS',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}

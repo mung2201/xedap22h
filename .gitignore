@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+
+# Build output
+frontend/dist/
+backend/dist/
+backend/coverage/
+backend/uploads/*
+!backend/uploads/.gitkeep
+*.tsbuildinfo
+
+# Local environment and runtime files
+.env
+.env.local
+frontend/.env
+backend/.env
+*.log
+
+# IDE and OS files
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini

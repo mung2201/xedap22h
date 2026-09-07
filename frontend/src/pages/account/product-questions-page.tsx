@@ -1,0 +1,186 @@
+import {
+  DeleteOutlined,
+  MessageOutlined,
+  ReloadOutlined,
+} from '@ant-design/icons';
+import {
+  Button,
+  Empty,
+  Image,
+  List,
+  Pagination,
+  Popconfirm,
+  Select,
+  Space,
+  Spin,
+  Tag,
+  Typography,
+  message,
+} from 'antd';
+import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { productQuestionService } from '../../api/services/product-question.service';
+import {
+  ProductQuestionStatus,
+  type ProductQuestion,
+  type ProductQuestionListResult,
+  productQuestionStatusLabels,
+} from '../../types/product-question';
+import { getErrorMessage } from '../../utils/error-message';
+
+const statusColor: Record<ProductQuestionStatus, string> = {
+  [ProductQuestionStatus.PENDING]: 'gold',
+  [ProductQuestionStatus.ANSWERED]: 'green',
+  [ProductQuestionStatus.HIDDEN]: 'default',
+};
+
+const formatDate = (value: string): string =>
+  new Intl.DateTimeFormat('vi-VN', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(value));
+
+export const ProductQuestionsPage = () => {
+  const [result, setResult] = useState<ProductQuestionListResult | null>(null);
+  const [status, setStatus] = useState<ProductQuestionStatus>();
+  const [page, setPage] = useState(1);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const loadQuestions = useCallback(async (): Promise<void> => {
+    setIsLoading(true);
+    try {
+      setResult(
+        await productQuestionService.getMine({
+          page,
+          limit: 10,
+          ...(status ? { status } : {}),
+        }),
+      );
+    } catch (error) {
+      message.error(getErrorMessage(error));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [page, status]);
+
+  useEffect(() => {
+    void loadQuestions();
+  }, [loadQuestions]);
+
+  const removeQuestion = async (question: ProductQuestion): Promise<void> => {
+    try {
+      await productQuestionService.removeMine(question.id);
+      message.success('Đã xóa câu hỏi đang chờ phản hồi.');
+      await loadQuestions();
+    } catch (error) {
+      message.error(getErrorMessage(error));
+    }
+  };
+
+  const items = result?.items ?? [];
+  const meta = result?.meta;
+
+  return (
+    <section className="account-product-questions-page">
+      <div className="account-content-heading">
+        <div>
+          <Typography.Title level={3}><MessageOutlined /> Câu hỏi của tôi</Typography.Title>
+          <Typography.Text type="secondary">
+            Theo dõi phản hồi tư vấn từ cửa hàng. Khi có câu trả lời, shop cũng gửi thông báo qua email.
+          </Typography.Text>
+        </div>
+        <Button icon={<ReloadOutlined />} onClick={() => void loadQuestions()}>
+          Làm mới
+        </Button>
+      </div>
+
+      <Select
+        allowClear
+        className="account-question-status-filter"
+        placeholder="Tất cả trạng thái"
+        value={status}
+        options={Object.values(ProductQuestionStatus).map((value) => ({
+          value,
+          label: productQuestionStatusLabels[value],
+        }))}
+        onChange={(value) => {
+          setStatus(value);
+          setPage(1);
+        }}
+      />
+
+      {isLoading ? (
+        <div className="account-question-loading"><Spin /></div>
+      ) : items.length ? (
+        <>
+          <List
+            className="account-question-list"
+            dataSource={items}
+            renderItem={(question) => (
+              <List.Item
+                actions={
+                  question.status === ProductQuestionStatus.PENDING
+                    ? [
+                        <Popconfirm
+                          key="delete"
+                          title="Xóa câu hỏi này?"
+                          description="Bạn chỉ có thể xóa câu hỏi khi shop chưa phản hồi."
+                          okText="Xóa"
+                          cancelText="Hủy"
+                          onConfirm={() => void removeQuestion(question)}
+                        >
+                          <Button danger type="link" icon={<DeleteOutlined />}>Xóa</Button>
+                        </Popconfirm>,
+                      ]
+                    : undefined
+                }
+              >
+                <List.Item.Meta
+                  avatar={<Image width={64} height={64} preview={false} src={question.product.thumbnail} />}
+                  title={
+                    <Space wrap>
+                      <Link to={`/products/${question.product.slug}`}>{question.product.name}</Link>
+                      <Tag color={statusColor[question.status]}>
+                        {productQuestionStatusLabels[question.status]}
+                      </Tag>
+                    </Space>
+                  }
+                  description={`Gửi lúc ${formatDate(question.createdAt)}`}
+                />
+                <div className="account-question-content">
+                  <Typography.Text strong>Câu hỏi của bạn</Typography.Text>
+                  <Typography.Paragraph>{question.question}</Typography.Paragraph>
+                  {question.answer ? (
+                    <div className="account-question-answer">
+                      <Typography.Text strong>{question.answer.answeredByName}</Typography.Text>
+                      <Typography.Text type="secondary">
+                        {formatDate(question.answer.answeredAt)}
+                      </Typography.Text>
+                      <Typography.Paragraph>{question.answer.content}</Typography.Paragraph>
+                    </div>
+                  ) : null}
+                </div>
+              </List.Item>
+            )}
+          />
+          {meta && (meta.totalPages ?? 1) > 1 ? (
+            <Pagination
+              className="account-question-pagination"
+              current={page}
+              pageSize={meta.limit ?? 10}
+              total={meta.total}
+              showSizeChanger={false}
+              onChange={setPage}
+            />
+          ) : null}
+        </>
+      ) : (
+        <Empty
+          className="account-question-empty"
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description="Bạn chưa gửi câu hỏi nào."
+        />
+      )}
+    </section>
+  );
+};
