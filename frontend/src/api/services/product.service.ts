@@ -17,9 +17,13 @@ const toProductListResult = (
 });
 
 export const productService = {
-  async getPublicList(query: ProductListQuery = {}): Promise<ProductListResult> {
+  async getPublicList(
+    query: ProductListQuery = {},
+    signal?: AbortSignal,
+  ): Promise<ProductListResult> {
     const response = await apiClient.get<ApiResponse<Product[]>>('/products', {
       params: query,
+      signal,
     });
     return toProductListResult(response.data);
   },

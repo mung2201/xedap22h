@@ -10,6 +10,8 @@ import { VouchersModule } from '../vouchers/vouchers.module';
 import { OrdersController } from './orders.controller';
 import { AdminOrdersController } from './admin-orders.controller';
 import { OrderTrackingController } from './order-tracking.controller';
+import { MomoPaymentController } from './momo-payment.controller';
+import { PayosPaymentController } from './payos-payment.controller';
 import { OrdersService } from './orders.service';
 import { Order, OrderSchema } from './schemas/order.schema';
 
@@ -26,7 +28,7 @@ import { Order, OrderSchema } from './schemas/order.schema';
     PaymentsModule,
     MailModule,
   ],
-  controllers: [OrdersController, AdminOrdersController, OrderTrackingController],
+  controllers: [OrdersController, AdminOrdersController, OrderTrackingController, MomoPaymentController, PayosPaymentController],
   providers: [OrdersService],
   exports: [OrdersService],
 })

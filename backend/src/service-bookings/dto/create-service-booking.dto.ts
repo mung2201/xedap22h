@@ -28,8 +28,8 @@ export class CreateServiceBookingDto {
   @ApiProperty({ example: '0901234567' })
   @Transform(trimValue)
   @IsString()
-  @Matches(/^[0-9+().\-\s]{8,25}$/, {
-    message: 'contactPhone must be a valid phone number.',
+  @Matches(/^0[35789][0-9]{8}$/, {
+    message: 'Số điện thoại phải gồm đúng 10 chữ số, bắt đầu bằng 03, 05, 07, 08 hoặc 09.',
   })
   contactPhone!: string;
 

@@ -11,10 +11,10 @@ import {
   Steps,
   Tag,
   Typography,
-  message,
 } from 'antd';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { orderService } from '../api/services/order.service';
+import { PhoneNumberInput } from '../components/common/phone-number-input';
 import {
   OrderStatus,
   PaymentStatus,
@@ -24,6 +24,7 @@ import {
   paymentStatusLabels,
 } from '../types/order';
 import { getErrorMessage } from '../utils/error-message';
+import { MOBILE_PHONE_MESSAGE, MOBILE_PHONE_PATTERN } from '../utils/address';
 
 const orderStatusColor: Record<OrderStatus, string> = {
   [OrderStatus.PENDING]: 'gold',
@@ -39,6 +40,7 @@ const paymentStatusColor: Record<PaymentStatus, string> = {
   [PaymentStatus.PAID]: 'green',
   [PaymentStatus.FAILED]: 'red',
   [PaymentStatus.REFUNDED]: 'purple',
+  [PaymentStatus.REFUND_PENDING]: 'orange',
 };
 
 const formatDateTime = (value: string): string =>
@@ -51,20 +53,34 @@ export const OrderTrackingPage = () => {
   const [form] = Form.useForm<TrackOrderPayload>();
   const [result, setResult] = useState<OrderTrackingResult | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const submitting = useRef(false);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const submit = async (values: TrackOrderPayload): Promise<void> => {
+    if (submitting.current) return;
+    submitting.current = true;
     setIsSubmitting(true);
+    setResult(null);
+    setErrorMessage(null);
     try {
       const tracking = await orderService.track({
         orderCode: values.orderCode.trim().toUpperCase(),
         phone: values.phone.trim(),
       });
-      setResult(tracking);
+      if (mounted.current) setResult(tracking);
     } catch (error) {
-      setResult(null);
-      message.error(getErrorMessage(error));
+      if (mounted.current) setErrorMessage(getErrorMessage(error));
     } finally {
-      setIsSubmitting(false);
+      submitting.current = false;
+      if (mounted.current) setIsSubmitting(false);
     }
   };
 
@@ -83,8 +99,8 @@ export const OrderTrackingPage = () => {
           <Typography.Text className="section-eyebrow">Theo dõi đơn hàng</Typography.Text>
           <Typography.Title level={1}>Biết đơn xe của bạn đang ở đâu</Typography.Title>
           <Typography.Paragraph>
-            Nhập mã đơn hàng và số điện thoại nhận hàng để xem tiến trình giao. Không
-            hiển thị thông tin cá nhân hoặc chi tiết sản phẩm trên trang công khai này.
+            Nhập mã đơn hàng và số điện thoại nhận hàng để theo dõi trạng thái
+            thanh toán và tiến trình giao xe của bạn.
           </Typography.Paragraph>
         </div>
         <TruckOutlined aria-hidden />
@@ -95,6 +111,11 @@ export const OrderTrackingPage = () => {
           form={form}
           layout="vertical"
           onFinish={submit}
+          disabled={isSubmitting}
+          onValuesChange={() => {
+            setResult(null);
+            setErrorMessage(null);
+          }}
           initialValues={{ orderCode: '', phone: '' }}
         >
           <Row gutter={[16, 0]} align="bottom">
@@ -103,14 +124,15 @@ export const OrderTrackingPage = () => {
                 name="orderCode"
                 label="Mã đơn hàng"
                 rules={[
-                  { required: true, message: 'Nhập mã đơn hàng.' },
+                  { required: true, whitespace: true, message: 'Nhập mã đơn hàng.' },
                   {
-                    pattern: /^ORD-[A-Za-z0-9-]+$/,
+                    transform: (value: string) => value.trim().toUpperCase(),
+                    pattern: /^ORD-[A-Z0-9-]{8,48}$/,
                     message: 'Mã đơn hàng có dạng ORD-YYYYMMDD-XXXX.',
                   },
                 ]}
               >
-                <Input placeholder="Ví dụ: ORD-20260831-ABCDEF" />
+                <Input placeholder="Ví dụ: ORD-20260831-ABCDEF" autoCapitalize="characters" spellCheck={false} />
               </Form.Item>
             </Col>
             <Col xs={24} md={10}>
@@ -118,11 +140,14 @@ export const OrderTrackingPage = () => {
                 name="phone"
                 label="Số điện thoại nhận hàng"
                 rules={[
-                  { required: true, message: 'Nhập số điện thoại nhận hàng.' },
-                  { min: 8, message: 'Số điện thoại chưa hợp lệ.' },
+                  { required: true, whitespace: true, message: 'Nhập số điện thoại nhận hàng.' },
+                  {
+                    pattern: MOBILE_PHONE_PATTERN,
+                    message: MOBILE_PHONE_MESSAGE,
+                  },
                 ]}
               >
-                <Input inputMode="tel" placeholder="Ví dụ: 0901234567" />
+                <PhoneNumberInput placeholder="Ví dụ: 0901234567" />
               </Form.Item>
             </Col>
             <Col xs={24} md={4}>
@@ -192,6 +217,14 @@ export const OrderTrackingPage = () => {
             </Col>
           </Row>
         </Card>
+      ) : errorMessage ? (
+        <Alert
+          className="order-tracking-note"
+          type="error"
+          showIcon
+          message="Không thể tra cứu đơn hàng"
+          description={errorMessage}
+        />
       ) : (
         <Alert
           className="order-tracking-note"

@@ -1,6 +1,6 @@
 import { Alert, Button, Card, Form, Input, Typography, message } from 'antd';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { authService } from '../../api/services/auth.service';
 import type { ResetPasswordPayload } from '../../types/auth';
 import { getErrorMessage } from '../../utils/error-message';
@@ -11,21 +11,24 @@ export const ResetPasswordPage = () => {
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token');
   const navigate = useNavigate();
+  const submitting = useRef(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async (values: ResetFormValues): Promise<void> => {
-    if (!token) {
+    if (!token || submitting.current) {
       return;
     }
 
+    submitting.current = true;
     setIsSubmitting(true);
     try {
       await authService.resetPassword({ ...values, token });
       message.success('Đặt lại mật khẩu thành công. Vui lòng đăng nhập lại.');
-      navigate('/login');
+      navigate('/login', { replace: true });
     } catch (error) {
       message.error(getErrorMessage(error));
     } finally {
+      submitting.current = false;
       setIsSubmitting(false);
     }
   };
@@ -38,10 +41,10 @@ export const ResetPasswordPage = () => {
           <Alert
             type="error"
             showIcon
-            message="Liên kết reset password không hợp lệ hoặc thiếu token."
+            message="Liên kết đặt lại mật khẩu không hợp lệ. Vui lòng nhận liên kết mới."
           />
         ) : (
-          <Form<ResetFormValues> layout="vertical" onFinish={handleSubmit}>
+          <Form<ResetFormValues> layout="vertical" onFinish={handleSubmit} disabled={isSubmitting}>
             <Form.Item
               label="Mật khẩu mới"
               name="password"
@@ -75,7 +78,22 @@ export const ResetPasswordPage = () => {
           </Form>
         )}
         <Typography.Paragraph className="auth-footer-text">
-          <Link to="/login">Quay lại đăng nhập</Link>
+          <Link
+            to="/forgot-password"
+            aria-disabled={isSubmitting}
+            onClick={(event) => { if (submitting.current) event.preventDefault(); }}
+          >
+            Nhận liên kết mới
+          </Link>
+        </Typography.Paragraph>
+        <Typography.Paragraph className="auth-footer-text">
+          <Link
+            to="/login"
+            aria-disabled={isSubmitting}
+            onClick={(event) => { if (submitting.current) event.preventDefault(); }}
+          >
+            Quay lại đăng nhập
+          </Link>
         </Typography.Paragraph>
       </Card>
     </main>

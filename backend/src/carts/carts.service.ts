@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { ClientSession, Model, Types } from 'mongoose';
 import {
   ProductsService,
   ResolvedProductVariant,
@@ -10,6 +10,7 @@ import { UpdateCartItemDto } from './dto/update-cart-item.dto';
 import { Cart, CartDocument, CartItem } from './schemas/cart.schema';
 
 const MAX_CART_ITEMS = 40;
+const MAX_CART_ITEM_QUANTITY = 99;
 
 export interface CartItemResponse {
   id: string;
@@ -50,12 +51,16 @@ export class CartsService {
     return cart ? this.toResponse(cart) : this.emptyResponse();
   }
 
-  async addItem(userId: string, dto: AddCartItemDto): Promise<CartResponse> {
+  async addItem(
+    userId: string,
+    dto: AddCartItemDto,
+    session?: ClientSession,
+  ): Promise<CartResponse> {
     const resolvedVariant = await this.productsService.resolveActiveVariant(
       dto.productId,
       dto.variantId,
     );
-    const cart = await this.getOrCreateCart(userId);
+    const cart = await this.getOrCreateCart(userId, session);
     const existingItem = cart.items.find(
       (item) =>
         item.product.toString() === resolvedVariant.productId &&
@@ -63,6 +68,11 @@ export class CartsService {
     );
     const nextQuantity = (existingItem?.quantity ?? 0) + dto.quantity;
 
+    if (nextQuantity > MAX_CART_ITEM_QUANTITY) {
+      throw new BadRequestException(
+        `Mỗi phân loại chỉ được có tối đa ${MAX_CART_ITEM_QUANTITY} sản phẩm trong giỏ hàng.`,
+      );
+    }
     this.assertStock(resolvedVariant, nextQuantity);
 
     if (existingItem) {
@@ -78,7 +88,7 @@ export class CartsService {
       cart.items.push(this.createCartItem(resolvedVariant, dto.quantity));
     }
 
-    await cart.save();
+    await cart.save(session ? { session } : undefined);
     return this.toResponse(cart);
   }
 
@@ -138,11 +148,26 @@ export class CartsService {
     return this.toResponse(cart);
   }
 
-  private async getOrCreateCart(userId: string): Promise<CartDocument> {
-    const existingCart = await this.cartModel.findOne({ user: userId }).exec();
+  private async getOrCreateCart(
+    userId: string,
+    session?: ClientSession,
+  ): Promise<CartDocument> {
+    const query = this.cartModel.findOne({ user: userId });
+    if (session) query.session(session);
+    const existingCart = await query.exec();
 
     if (existingCart) {
       return existingCart;
+    }
+
+    if (session) {
+      // Transaction errors must reach withTransaction so it can retry the
+      // entire operation; querying an aborted transaction cannot recover it.
+      const [cart] = await this.cartModel.create(
+        [{ user: userId, items: [] }],
+        { session },
+      );
+      return cart;
     }
 
     try {

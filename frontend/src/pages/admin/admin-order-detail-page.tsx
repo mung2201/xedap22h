@@ -2,6 +2,7 @@ import {
   ArrowLeftOutlined,
   EnvironmentOutlined,
   FileTextOutlined,
+  ReloadOutlined,
   SaveOutlined,
   ShoppingCartOutlined,
 } from '@ant-design/icons';
@@ -25,17 +26,21 @@ import {
   Typography,
   message,
 } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { adminOrderService } from '../../api/services/admin-order.service';
 import {
   OrderStatus,
+  PaymentMethod,
   PaymentStatus,
+  getOrderPaymentLabel,
   orderStatusLabels,
   paymentStatusLabels,
+  shippingMethodLabels,
 } from '../../types/order';
 import type { Order } from '../../types/order';
 import { formatCurrency } from '../../utils/currency';
+import { formatDeliveryAddress } from '../../utils/address';
 import { getErrorMessage } from '../../utils/error-message';
 
 const orderStatusColor: Record<OrderStatus, string> = {
@@ -52,6 +57,7 @@ const paymentStatusColor: Record<PaymentStatus, string> = {
   [PaymentStatus.PAID]: 'green',
   [PaymentStatus.FAILED]: 'red',
   [PaymentStatus.REFUNDED]: 'purple',
+  [PaymentStatus.REFUND_PENDING]: 'orange',
 };
 
 const allowedTransitions: Record<OrderStatus, OrderStatus[]> = {
@@ -81,30 +87,52 @@ export const AdminOrderDetailPage = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isCheckingPayment, setIsCheckingPayment] = useState(false);
   const [form] = Form.useForm<StatusFormValues>();
+  const [reloadKey, setReloadKey] = useState(0);
+  const loadController = useRef<AbortController | null>(null);
+  const statusPending = useRef(false);
+  const paymentCheckPending = useRef(false);
 
   useEffect(() => {
+    const controller = new AbortController();
+    loadController.current = controller;
+    statusPending.current = false;
+    paymentCheckPending.current = false;
+    setIsModalOpen(false);
+    setIsSaving(false);
+    setIsCheckingPayment(false);
     const loadOrder = async (): Promise<void> => {
       setIsLoading(true);
       setErrorMessage(null);
+      setOrder(null);
       try {
-        setOrder(await adminOrderService.getById(id));
+        const nextOrder = await adminOrderService.getById(id, controller.signal);
+        if (!controller.signal.aborted) setOrder(nextOrder);
       } catch (error) {
-        setErrorMessage(getErrorMessage(error));
+        if (!controller.signal.aborted) setErrorMessage(getErrorMessage(error));
       } finally {
-        setIsLoading(false);
+        if (!controller.signal.aborted) setIsLoading(false);
       }
     };
 
     void loadOrder();
-  }, [id]);
+    return () => controller.abort();
+  }, [id, reloadKey]);
 
   const nextStatuses = useMemo(
-    () => (order ? allowedTransitions[order.orderStatus] : []),
+    () => {
+      if (!order) return [];
+      const transitions = allowedTransitions[order.orderStatus];
+      return order.paymentMethod === PaymentMethod.ONLINE && order.paymentStatus !== PaymentStatus.PAID
+        ? transitions.filter((status) => status === OrderStatus.CANCELLED)
+        : transitions;
+    },
     [order],
   );
 
   const openStatusModal = (): void => {
+    if (paymentCheckPending.current || statusPending.current) return;
     const nextStatus = nextStatuses[0];
     if (!nextStatus) {
       return;
@@ -114,7 +142,7 @@ export const AdminOrderDetailPage = () => {
   };
 
   const saveStatus = async (values: StatusFormValues): Promise<void> => {
-    if (!order) {
+    if (!order || statusPending.current || paymentCheckPending.current) {
       return;
     }
 
@@ -125,20 +153,47 @@ export const AdminOrderDetailPage = () => {
       return;
     }
 
+    const signal = loadController.current?.signal;
+    statusPending.current = true;
     setIsSaving(true);
     try {
       const updatedOrder = await adminOrderService.updateStatus(order.id, {
         orderStatus: values.orderStatus,
         ...(values.note?.trim() ? { note: values.note.trim() } : {}),
       });
+      if (signal?.aborted) return;
       setOrder(updatedOrder);
       setIsModalOpen(false);
       form.resetFields();
       message.success('Đã cập nhật trạng thái đơn hàng.');
     } catch (error) {
-      message.error(getErrorMessage(error));
+      if (!signal?.aborted) message.error(getErrorMessage(error));
     } finally {
-      setIsSaving(false);
+      if (!signal?.aborted) {
+        statusPending.current = false;
+        setIsSaving(false);
+      }
+    }
+  };
+
+  const checkPayment = async (): Promise<void> => {
+    if (!order || order.paymentProvider !== 'PAYOS' || paymentCheckPending.current ||
+      statusPending.current || isModalOpen) return;
+    const signal = loadController.current?.signal;
+    paymentCheckPending.current = true;
+    setIsCheckingPayment(true);
+    try {
+      const updatedOrder = await adminOrderService.syncPayment(order.id, signal);
+      if (signal?.aborted) return;
+      setOrder(updatedOrder);
+      message.success(`Trạng thái thanh toán: ${paymentStatusLabels[updatedOrder.paymentStatus]}.`);
+    } catch (error) {
+      if (!signal?.aborted) message.error(getErrorMessage(error));
+    } finally {
+      if (!signal?.aborted) {
+        paymentCheckPending.current = false;
+        setIsCheckingPayment(false);
+      }
     }
   };
 
@@ -146,8 +201,15 @@ export const AdminOrderDetailPage = () => {
     return <Spin size="large" className="admin-page-spinner" />;
   }
 
-  if (!order) {
-    return <Alert type="error" showIcon message={errorMessage ?? 'Không tìm thấy đơn hàng.'} />;
+  if (errorMessage || !order) {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        message={errorMessage ?? 'Không tìm thấy đơn hàng.'}
+        action={<Button onClick={() => setReloadKey((value) => value + 1)}>Thử lại</Button>}
+      />
+    );
   }
 
   return (
@@ -165,7 +227,7 @@ export const AdminOrderDetailPage = () => {
           </Space>
         </div>
         {nextStatuses.length ? (
-          <Button type="primary" icon={<SaveOutlined />} onClick={openStatusModal}>
+          <Button type="primary" icon={<SaveOutlined />} disabled={isCheckingPayment} onClick={openStatusModal}>
             Cập nhật trạng thái
           </Button>
         ) : null}
@@ -205,7 +267,7 @@ export const AdminOrderDetailPage = () => {
               <Descriptions.Item label="Email">{order.customerInfo.email}</Descriptions.Item>
               <Descriptions.Item label="Số điện thoại">{order.shippingAddress.phone}</Descriptions.Item>
               <Descriptions.Item label="Địa chỉ">
-                {order.shippingAddress.addressLine}, {order.shippingAddress.ward}, {order.shippingAddress.district}, {order.shippingAddress.province}
+                {formatDeliveryAddress(order.shippingAddress)}
               </Descriptions.Item>
               {order.shippingAddress.note ? (
                 <Descriptions.Item label="Ghi chú giao hàng">{order.shippingAddress.note}</Descriptions.Item>
@@ -216,14 +278,37 @@ export const AdminOrderDetailPage = () => {
         <Col xs={24} xl={12}>
           <Card title={<><FileTextOutlined /> Thanh toán</>} className="admin-order-section-card">
             <Descriptions column={1} size="small">
-              <Descriptions.Item label="Phương thức">{order.paymentMethod}</Descriptions.Item>
+              <Descriptions.Item label="Phương thức">{getOrderPaymentLabel(order)}</Descriptions.Item>
               <Descriptions.Item label="Trạng thái">{paymentStatusLabels[order.paymentStatus]}</Descriptions.Item>
-              <Descriptions.Item label="Vận chuyển">{order.shippingMethod}</Descriptions.Item>
+              {order.paymentProvider === 'PAYOS' && typeof order.receivedPaymentAmount === 'number' &&
+                Number.isFinite(order.receivedPaymentAmount) ? (
+                  <Descriptions.Item label="Đã nhận qua payOS">{formatCurrency(order.receivedPaymentAmount)}</Descriptions.Item>
+                ) : null}
+              <Descriptions.Item label="Vận chuyển">{shippingMethodLabels[order.shippingMethod]}</Descriptions.Item>
               {order.voucher ? (
                 <Descriptions.Item label="Voucher">{order.voucher.code}</Descriptions.Item>
               ) : null}
               {order.note ? <Descriptions.Item label="Ghi chú">{order.note}</Descriptions.Item> : null}
             </Descriptions>
+            <Space direction="vertical" size="middle" className="full-width">
+              {order.paymentProvider === 'PAYOS' ? (
+                <Button icon={<ReloadOutlined />} loading={isCheckingPayment}
+                  disabled={isSaving || isModalOpen} onClick={() => void checkPayment()}>
+                  Kiểm tra thanh toán payOS
+                </Button>
+              ) : null}
+              {order.paymentMethod === PaymentMethod.ONLINE &&
+                order.paymentStatus !== PaymentStatus.PAID &&
+                order.orderStatus !== OrderStatus.CANCELLED &&
+                order.orderStatus !== OrderStatus.DELIVERED ? (
+                  <Alert type="info" showIcon message="Cần thanh toán trước khi xử lý đơn online."
+                    description="Chỉ có thể xác nhận, đóng gói hoặc giao hàng sau khi hệ thống ghi nhận đã thanh toán." />
+                ) : null}
+              {order.paymentStatus === PaymentStatus.REFUND_PENDING ? (
+                <Alert type="warning" showIcon message="Đơn hàng đang chờ hoàn tiền."
+                  description="Kiểm tra số tiền thực nhận và xử lý hoàn tiền cho khách. Kiểm tra thanh toán không thực hiện hoàn tiền." />
+              ) : null}
+            </Space>
           </Card>
         </Col>
       </Row>
@@ -273,7 +358,9 @@ export const AdminOrderDetailPage = () => {
         open={isModalOpen}
         footer={null}
         destroyOnHidden
-        onCancel={() => setIsModalOpen(false)}
+        onCancel={() => { if (!statusPending.current) setIsModalOpen(false); }}
+        closable={!isSaving}
+        maskClosable={!isSaving}
       >
         <Form<StatusFormValues> form={form} layout="vertical" onFinish={saveStatus}>
           <Form.Item name="orderStatus" label="Trạng thái tiếp theo" rules={[{ required: true }]}>
@@ -292,7 +379,7 @@ export const AdminOrderDetailPage = () => {
           </Typography.Paragraph>
           <div className="modal-form-actions">
             <Space>
-              <Button onClick={() => setIsModalOpen(false)}>Hủy</Button>
+              <Button disabled={isSaving} onClick={() => setIsModalOpen(false)}>Hủy</Button>
               <Button type="primary" htmlType="submit" loading={isSaving}>
                 Lưu thay đổi
               </Button>

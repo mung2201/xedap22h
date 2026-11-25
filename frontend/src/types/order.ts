@@ -5,6 +5,11 @@ export enum ShippingMethod {
   EXPRESS = 'EXPRESS',
 }
 
+export const shippingMethodLabels: Record<ShippingMethod, string> = {
+  [ShippingMethod.STANDARD]: 'Giao tiêu chuẩn',
+  [ShippingMethod.EXPRESS]: 'Giao nhanh',
+};
+
 export enum PaymentMethod {
   COD = 'COD',
   ONLINE = 'ONLINE',
@@ -15,6 +20,7 @@ export enum PaymentStatus {
   PAID = 'PAID',
   FAILED = 'FAILED',
   REFUNDED = 'REFUNDED',
+  REFUND_PENDING = 'REFUND_PENDING',
 }
 
 export enum OrderStatus {
@@ -83,6 +89,7 @@ export interface CheckoutPreview {
 export interface CreateOrderPayload extends CheckoutPreviewPayload {
   paymentMethod: PaymentMethod;
   customerEmail?: string;
+  customerPhone?: string;
   note?: string;
 }
 
@@ -125,6 +132,7 @@ export interface Order {
   shippingMethod: ShippingMethod;
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
+  receivedPaymentAmount?: number;
   paidAt?: string;
   refundedAt?: string;
   paymentProvider?: string;
@@ -143,7 +151,14 @@ export interface Order {
   updatedAt: string;
 }
 
-export type QrPaymentMode = 'SANDBOX' | 'VIETQR';
+export type QrPaymentMode = 'SANDBOX' | 'VIETQR' | 'MOMO' | 'PAYOS';
+
+export interface PaymentOptions {
+  provider: 'QR_TRANSFER' | 'MOMO' | 'PAYOS';
+  mode: QrPaymentMode;
+  enabled: boolean;
+  environment?: 'sandbox' | 'production';
+}
 
 export interface QrPaymentInstruction {
   mode: QrPaymentMode;
@@ -152,11 +167,16 @@ export interface QrPaymentInstruction {
   paymentReference: string;
   instructions: string;
   customerCanConfirm: boolean;
+  gatewayUrl?: string;
+  environment?: 'sandbox' | 'production';
+  paymentStarted?: boolean;
   qrPayload?: string;
   qrImageUrl?: string;
   bankBin?: string;
   accountNumber?: string;
   accountName?: string;
+  expiresAt?: string;
+  amountPaid?: number;
 }
 
 export interface OnlinePaymentDetails {
@@ -207,4 +227,14 @@ export const paymentStatusLabels: Record<PaymentStatus, string> = {
   [PaymentStatus.PAID]: 'Đã thanh toán',
   [PaymentStatus.FAILED]: 'Thanh toán lỗi',
   [PaymentStatus.REFUNDED]: 'Đã hoàn tiền',
+  [PaymentStatus.REFUND_PENDING]: 'Chờ hoàn tiền',
 };
+
+export const getOrderPaymentLabel = (order: Pick<Order, 'paymentMethod' | 'paymentProvider'>): string =>
+  order.paymentMethod === PaymentMethod.COD
+    ? 'Thanh toán khi nhận hàng (COD)'
+    : order.paymentProvider === 'MOMO'
+      ? 'MoMo doanh nghiệp'
+      : order.paymentProvider === 'PAYOS'
+        ? 'QR ngân hàng qua payOS'
+        : 'Thanh toán QR / chuyển khoản';

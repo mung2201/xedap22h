@@ -21,7 +21,7 @@ export class ProductVariantDto {
   @ApiProperty({ example: 'Black' })
   @Transform(trimValue)
   @IsString()
-  @Length(1, 80)
+  @MaxLength(80)
   color!: string;
 
   @ApiPropertyOptional({ example: '#111111' })
@@ -33,7 +33,7 @@ export class ProductVariantDto {
   @ApiProperty({ example: 'M' })
   @Transform(trimValue)
   @IsString()
-  @Length(1, 80)
+  @MaxLength(80)
   size!: string;
 
   @ApiProperty({ example: 'TREK-MARLIN-8-BLK-M' })

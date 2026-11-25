@@ -26,6 +26,7 @@ interface ProductSectionProps {
   autoplaySpeed?: number;
   spotlight?: ProductSectionSpotlight;
   actions?: ReactNode;
+  filters?: ReactNode;
 }
 
 export const ProductSection = ({
@@ -41,6 +42,7 @@ export const ProductSection = ({
   autoplaySpeed,
   spotlight,
   actions,
+  filters,
 }: ProductSectionProps) => (
   <section className={`home-product-section home-product-section--${tone}`}>
     <div className="page-container">
@@ -62,14 +64,15 @@ export const ProductSection = ({
             {actions}
             {viewAllTo && (
               <Link to={viewAllTo}>
-            <Button type="link" icon={<ArrowRightOutlined />} iconPosition="end">
-              Xem tất cả
-            </Button>
+                <Button type="link" icon={<ArrowRightOutlined />} iconPosition="end">
+                  Xem tất cả
+                </Button>
               </Link>
             )}
           </div>
         )}
       </div>
+      {filters}
       {isLoading ? (
         <Space direction="vertical" className="full-width" size="large">
           <Skeleton active paragraph={{ rows: 8 }} />
@@ -80,7 +83,7 @@ export const ProductSection = ({
             <Link to={spotlight.to} className="product-section-spotlight">
               <div className="product-section-spotlight-media">
                 {spotlight.imageUrl ? (
-                  <img src={spotlight.imageUrl} alt={spotlight.title} />
+                  <img src={spotlight.imageUrl} alt={spotlight.title} loading="lazy" decoding="async" />
                 ) : null}
               </div>
               <div className="product-section-spotlight-copy">
@@ -94,6 +97,7 @@ export const ProductSection = ({
             </Link>
             <div className="product-section-rail-products">
               <ProductCarousel
+                key={spotlight.to}
                 products={products}
                 autoplaySpeed={autoplaySpeed}
                 maxVisibleProductCount={3}

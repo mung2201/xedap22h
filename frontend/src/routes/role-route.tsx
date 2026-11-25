@@ -1,4 +1,4 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { FullPageLoader } from '../components/common/full-page-loader';
 import { useAuthStore } from '../stores/auth.store';
@@ -15,6 +15,7 @@ export const RoleRoute = ({
   children,
   unauthenticatedRedirectTo = '/admin/login',
 }: RoleRouteProps) => {
+  const location = useLocation();
   const user = useAuthStore((state) => state.user);
   const isBootstrapping = useAuthStore((state) => state.isBootstrapping);
 
@@ -23,7 +24,7 @@ export const RoleRoute = ({
   }
 
   if (!user) {
-    return <Navigate to={unauthenticatedRedirectTo} replace />;
+    return <Navigate to={unauthenticatedRedirectTo} state={{ from: location.pathname + location.search + location.hash }} replace />;
   }
 
   return allowedRoles.includes(user.role) ? (

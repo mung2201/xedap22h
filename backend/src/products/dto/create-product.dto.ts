@@ -114,6 +114,12 @@ export class CreateProductDto {
   @IsBoolean()
   featured?: boolean;
 
+  @ApiPropertyOptional({ default: false, description: 'Visible catalog listing; purchases remain disabled until the sale data is confirmed.' })
+  @IsOptional()
+  @Transform(toOptionalBoolean)
+  @IsBoolean()
+  catalogOnly?: boolean;
+
   @ApiPropertyOptional({ enum: BikeType, description: 'Required for BICYCLE products' })
   @IsOptional()
   @IsEnum(BikeType)
@@ -147,9 +153,8 @@ export class CreateProductDto {
   @Type(() => ProductSpecificationDto)
   specifications?: ProductSpecificationDto[];
 
-  @ApiProperty({ type: [ProductVariantDto], minItems: 1 })
+  @ApiProperty({ type: [ProductVariantDto], description: 'At least one complete variant is required unless catalogOnly is true.' })
   @IsArray()
-  @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => ProductVariantDto)
   variants!: ProductVariantDto[];

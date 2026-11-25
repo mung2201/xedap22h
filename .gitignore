@@ -1,12 +1,14 @@
 # Dependencies
 node_modules/
-frontend/node_modules/
-backend/node_modules/
 
 # Build output
 frontend/dist/
 backend/dist/
 backend/coverage/
+frontend/.build-verify/
+coverage/
+playwright-report/
+test-results/
 backend/uploads/*
 !backend/uploads/.gitkeep
 *.tsbuildinfo
@@ -14,13 +16,38 @@ backend/uploads/*
 # Local environment and runtime files
 .env
 .env.local
+.env.*
+!.env.example
 frontend/.env
 backend/.env
 *.log
 
+# Local catalog import and backup tools
+/du-lieu-can-nhap/
+/scripts/
+/backend/src/catalog-import/
+/data/
+
+# Development tests kept on this machine
+/backend/test/
+/frontend/test/
+
 # IDE and OS files
+.DS_Store
+._*
+__MACOSX/
+~$*
 .vscode/
 .idea/
 *.swp
 Thumbs.db
 Desktop.ini
+
+# Python caches from catalog and report tools
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local documentation and thesis files
+/README.md
+/docs/

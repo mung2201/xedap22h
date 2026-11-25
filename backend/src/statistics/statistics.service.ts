@@ -11,6 +11,8 @@ import { DashboardPeriod, DashboardQueryDto } from './dto/dashboard-query.dto';
 
 const VIETNAM_TIMEZONE = 'Asia/Ho_Chi_Minh';
 const VIETNAM_OFFSET_MS = 7 * 60 * 60 * 1_000;
+const DAY_MS = 24 * 60 * 60 * 1_000;
+const MAX_CUSTOM_RANGE_DAYS = 366;
 
 export interface DashboardStatisticsResponse {
   range: {
@@ -75,8 +77,8 @@ export class StatisticsService {
   async getDashboard(
     query: DashboardQueryDto,
   ): Promise<DashboardStatisticsResponse> {
-    const range = this.resolveRange(query);
     const now = new Date();
+    const range = this.resolveRange(query, now);
     const today = this.getStartOfVietnamDay(now);
     const monthStart = this.getStartOfVietnamMonth(now);
     const lowStockThreshold = this.configService.getOrThrow<number>(
@@ -149,19 +151,33 @@ export class StatisticsService {
     };
   }
 
-  private resolveRange(query: DashboardQueryDto): DateRange {
-    const now = new Date();
-
+  private resolveRange(query: DashboardQueryDto, now: Date): DateRange {
     if (query.period === DashboardPeriod.CUSTOM) {
       if (!query.startDate || !query.endDate) {
         throw new BadRequestException(
           'startDate and endDate are required for a custom dashboard range.',
         );
       }
+      if (
+        !(query.startDate instanceof Date) ||
+        !(query.endDate instanceof Date) ||
+        !Number.isFinite(query.startDate.getTime()) ||
+        !Number.isFinite(query.endDate.getTime())
+      ) {
+        throw new BadRequestException('startDate and endDate must be valid dates.');
+      }
       const startDate = this.getStartOfVietnamDay(query.startDate);
       const endDate = this.getEndOfVietnamDay(query.endDate);
       if (startDate > endDate) {
         throw new BadRequestException('startDate must be before endDate.');
+      }
+      if (
+        endDate.getTime() - startDate.getTime() + 1 >
+        MAX_CUSTOM_RANGE_DAYS * DAY_MS
+      ) {
+        throw new BadRequestException(
+          `A custom dashboard range must not exceed ${MAX_CUSTOM_RANGE_DAYS} days.`,
+        );
       }
       return { startDate, endDate };
     }
@@ -205,7 +221,9 @@ export class StatisticsService {
       $or: [
         { paidAt: { $gte: range.startDate, $lte: range.endDate } },
         {
-          paidAt: { $exists: false },
+          // MongoDB null matches both a missing field and an explicit null,
+          // consistent with the $ifNull used to group the revenue series.
+          paidAt: null,
           createdAt: { $gte: range.startDate, $lte: range.endDate },
         },
       ],
@@ -398,10 +416,19 @@ export class StatisticsService {
         {
           $set: {
             categoryId: {
-              $ifNull: [
-                '$items.categoryId',
-                { $arrayElemAt: ['$product.category', 0] },
-              ],
+              // Historical product references can be strings because the
+              // product schema uses Mixed; snapshots also retain precedence.
+              $convert: {
+                input: {
+                  $ifNull: [
+                    '$items.categoryId',
+                    { $arrayElemAt: ['$product.category', 0] },
+                  ],
+                },
+                to: 'objectId',
+                onError: null,
+                onNull: null,
+              },
             },
           },
         },
@@ -448,7 +475,7 @@ export class StatisticsService {
   }> {
     const [summary] = (await this.productModel
       .aggregate([
-        { $match: { status: ProductStatus.ACTIVE } },
+        { $match: { status: ProductStatus.ACTIVE, catalogOnly: { $ne: true } } },
         {
           $project: {
             name: 1,

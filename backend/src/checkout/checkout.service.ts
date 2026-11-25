@@ -8,6 +8,11 @@ import { Cart, CartDocument } from '../carts/schemas/cart.schema';
 import { CategoriesService } from '../categories/categories.service';
 import { ShippingMethod } from '../common/enums/commerce.enum';
 import { ProductStatus } from '../common/enums/catalog.enum';
+import {
+  PAYMENT_DEMO_PRICE,
+  PAYMENT_DEMO_PRODUCT_SKU,
+  PAYMENT_DEMO_VARIANT_SKU,
+} from '../demo/payment-demo.constants';
 import { Product } from '../products/schemas/product.schema';
 import { ResolvedVoucher, VouchersService } from '../vouchers/vouchers.service';
 import { CheckoutPreviewDto } from './dto/checkout-preview.dto';
@@ -88,6 +93,7 @@ export class CheckoutService {
     const productsQuery = this.productModel.find({
       _id: { $in: productIds },
       status: ProductStatus.ACTIVE,
+      catalogOnly: { $ne: true },
     });
     if (session) {
       productsQuery.session(session);
@@ -109,6 +115,7 @@ export class CheckoutService {
 
       if (
         !product ||
+        product.catalogOnly ||
         !publicCategoryIdSet.has(product.category.toString()) ||
         !activeBrandIdSet.has(product.brand.toString())
       ) {
@@ -159,7 +166,9 @@ export class CheckoutService {
       session,
     );
     const discount = voucher?.discountAmount ?? 0;
-    const shippingFee = this.calculateShippingFee(dto.shippingMethod, subtotal);
+    const shippingFee = this.isPaymentDemoCheckout(items)
+      ? 0
+      : this.calculateShippingFee(dto.shippingMethod, subtotal);
 
     return {
       cartId: cart._id.toString(),
@@ -207,6 +216,23 @@ export class CheckoutService {
     }
 
     return address;
+  }
+
+  private isPaymentDemoCheckout(
+    items: CheckoutItemSnapshot[],
+  ): boolean {
+    if (items.length !== 1) {
+      return false;
+    }
+
+    // This test product is never shipped. Use server-resolved SKUs and prices
+    // so adding it to a regular cart cannot waive that cart's delivery fee.
+    const item = items[0];
+    return item.productSku === PAYMENT_DEMO_PRODUCT_SKU &&
+      item.sku === PAYMENT_DEMO_VARIANT_SKU &&
+      Number.isInteger(item.quantity) && item.quantity > 0 &&
+      item.unitPrice === PAYMENT_DEMO_PRICE &&
+      item.totalPrice === PAYMENT_DEMO_PRICE * item.quantity;
   }
 
   private calculateShippingFee(

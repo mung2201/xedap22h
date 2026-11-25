@@ -19,17 +19,20 @@ import {
   Dropdown,
   FloatButton,
   Layout,
+  Modal,
   Row,
   Space,
+  Spin,
   Typography,
+  message,
 } from 'antd';
 import type { MenuProps } from 'antd';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, Outlet, useNavigate } from 'react-router-dom';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Link, Outlet, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { brandService } from '../api/services/brand.service';
 import { categoryService } from '../api/services/category.service';
 import { GlobalProductSearch } from '../components/common/global-product-search';
-import { CustomerLoginModal } from '../components/auth/customer-login-modal';
+import { PageBackNavigation } from '../components/common/page-back-navigation';
 import { FaqChatbotWidget } from '../components/chatbot/faq-chatbot-widget';
 import { CompareTray } from '../components/products/compare-tray';
 import { useAuthStore } from '../stores/auth.store';
@@ -37,8 +40,70 @@ import { useCommerceStore } from '../stores/commerce.store';
 import type { Brand, CategoryTreeNode } from '../types/catalog';
 
 const { Header, Content, Footer } = Layout;
+const CustomerLoginModal = lazy(() => import('../components/auth/customer-login-modal')
+  .then((module) => ({ default: module.CustomerLoginModal })));
+const scrollPositions = new Map<string, number>();
+
+// Wait for asynchronous page content before restoring Back/Forward positions.
+const useStorefrontScroll = (): void => {
+  const { key, pathname, hash } = useLocation();
+  const navigationType = useNavigationType();
+  const previous = useRef({ key, pathname });
+
+  useLayoutEffect(() => {
+    const saved = navigationType === 'POP' ? scrollPositions.get(key) : undefined;
+    const target = saved ?? (previous.current.pathname === pathname
+      ? scrollPositions.get(previous.current.key) ?? window.scrollY : 0);
+    previous.current = { key, pathname };
+    const oldRestoration = window.history.scrollRestoration;
+    window.history.scrollRestoration = 'manual';
+    let restoring = true;
+    const remember = (): void => {
+      if (!restoring) scrollPositions.set(key, window.scrollY);
+    };
+    const stop = (): void => {
+      restoring = false;
+      observer.disconnect();
+      remember();
+    };
+    const restore = (): void => {
+      if (!restoring) return;
+      if (hash && saved === undefined) {
+        let anchor = hash.slice(1);
+        try { anchor = decodeURIComponent(anchor); } catch { /* Use the literal anchor for malformed URLs. */ }
+        const element = document.getElementById(anchor);
+        if (!element) return;
+        element.scrollIntoView({ behavior: 'instant' });
+        stop();
+        return;
+      }
+      window.scrollTo({ top: target, behavior: 'instant' });
+      if (Math.abs(window.scrollY - target) < 2) stop();
+    };
+    scrollPositions.set(key, target);
+    if (scrollPositions.size > 100) scrollPositions.delete(scrollPositions.keys().next().value!);
+    const observer = new ResizeObserver(restore);
+    observer.observe(document.body);
+    restore();
+    const timeout = window.setTimeout(stop, 10_000);
+    window.addEventListener('scroll', remember, { passive: true });
+    window.addEventListener('wheel', stop, { passive: true });
+    window.addEventListener('touchstart', stop, { passive: true });
+    window.addEventListener('keydown', stop);
+    return () => {
+      observer.disconnect();
+      window.clearTimeout(timeout);
+      window.removeEventListener('scroll', remember);
+      window.removeEventListener('wheel', stop);
+      window.removeEventListener('touchstart', stop);
+      window.removeEventListener('keydown', stop);
+      window.history.scrollRestoration = oldRestoration;
+    };
+  }, [key, pathname, hash, navigationType]);
+};
 
 export const CustomerLayout = () => {
+  useStorefrontScroll();
   const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
   const navigate = useNavigate();
@@ -50,9 +115,39 @@ export const CustomerLayout = () => {
   const [brands, setBrands] = useState<Brand[]>([]);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [hasOpenedLoginModal, setHasOpenedLoginModal] = useState(false);
   const [postLoginDestination, setPostLoginDestination] = useState<string | null>(null);
   const [isMegaMenuOpen, setIsMegaMenuOpen] = useState(false);
   const [isNavigationDataLoading, setIsNavigationDataLoading] = useState(true);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const loggingOut = useRef(false);
+  const mounted = useRef(true);
+  const megaMenuRef = useRef<HTMLDivElement>(null);
+  const megaMenuTriggerRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!isMegaMenuOpen) return;
+    const closeOutside = (event: PointerEvent): void => {
+      if (!megaMenuRef.current?.contains(event.target as Node)) setIsMegaMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        setIsMegaMenuOpen(false);
+        megaMenuTriggerRef.current?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', closeOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [isMegaMenuOpen]);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   useEffect(() => {
     if (!user) {
@@ -89,14 +184,33 @@ export const CustomerLayout = () => {
   }, [loadNavigationData]);
 
   const handleLogout = async (): Promise<void> => {
-    await logout();
-    resetCommerce();
-    navigate('/');
+    if (loggingOut.current) return;
+    loggingOut.current = true;
+    setIsLoggingOut(true);
+    try {
+      const request = logout();
+      resetCommerce();
+      navigate('/', { replace: true });
+      await request;
+    } catch {
+      if (mounted.current && !useAuthStore.getState().isAuthenticated) {
+        message.warning('Đã đăng xuất trên trang này, nhưng máy chủ chưa xác nhận đăng xuất.');
+      }
+    } finally {
+      loggingOut.current = false;
+      if (mounted.current) setIsLoggingOut(false);
+    }
   };
 
   const requestLogin = (destination?: string): void => {
     setPostLoginDestination(destination ?? null);
+    setHasOpenedLoginModal(true);
     setIsLoginModalOpen(true);
+  };
+
+  const closeLoginModal = (): void => {
+    setIsLoginModalOpen(false);
+    setPostLoginDestination(null);
   };
 
   const handleLoginSuccess = (): void => {
@@ -131,7 +245,8 @@ export const CustomerLayout = () => {
     {
       key: 'logout',
       icon: <LogoutOutlined />,
-      label: 'Đăng xuất',
+      label: isLoggingOut ? 'Đang đăng xuất…' : 'Đăng xuất',
+      disabled: isLoggingOut,
       onClick: () => void handleLogout(),
     },
   ];
@@ -241,6 +356,7 @@ export const CustomerLayout = () => {
       <nav className="store-category-nav" aria-label="Danh mục sản phẩm">
         <div className="page-container store-category-nav-content">
           <div
+            ref={megaMenuRef}
             className="store-category-mega"
             onMouseEnter={() => {
               setIsMegaMenuOpen(true);
@@ -249,15 +365,21 @@ export const CustomerLayout = () => {
               }
             }}
             onMouseLeave={() => setIsMegaMenuOpen(false)}
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget)) setIsMegaMenuOpen(false);
+            }}
           >
             <Button
+              ref={megaMenuTriggerRef}
               type="text"
               className={`store-category-menu-trigger ${isMegaMenuOpen ? 'is-open' : ''}`}
               icon={<MenuOutlined />}
               aria-expanded={isMegaMenuOpen}
-              aria-haspopup="menu"
-              onClick={() => {
-                setIsMegaMenuOpen(true);
+              aria-controls="store-category-panel"
+              onClick={(event) => {
+                // Hover already opens the desktop panel; keyboard activation
+                // still toggles it without closing on the first mouse click.
+                setIsMegaMenuOpen((open) => event.detail === 0 ? !open : true);
                 if (!megaCategoryGroups.length || !brands.length) {
                   void loadNavigationData();
                 }
@@ -267,7 +389,7 @@ export const CustomerLayout = () => {
               <DownOutlined className="store-category-menu-chevron" />
             </Button>
             {isMegaMenuOpen ? (
-              <div className="store-category-mega-panel" role="menu">
+              <div id="store-category-panel" className="store-category-mega-panel">
                 {megaCategoryGroups.length ? (
                   <div className="store-category-mega-groups">
                     {megaCategoryGroups.map((group) => (
@@ -336,13 +458,14 @@ export const CustomerLayout = () => {
           <Link to="/products">Xe đạp & phụ kiện</Link>
           <Link to="/service-booking">Dịch vụ</Link>
           <Link to="/products?onSale=true">Chương trình khuyến mãi</Link>
-          <Link to="/products?featured=true">Xe đạp nổi bật</Link>
+          <Link to="/products?sort=newest">Sản phẩm mới</Link>
           <Link to="/size-guide">Tư vấn chọn size</Link>
           <Link to="/compare">So sánh xe</Link>
         </div>
       </nav>
 
       <Content className="site-content">
+        <PageBackNavigation className="page-container" />
         <Outlet />
       </Content>
 
@@ -388,7 +511,7 @@ export const CustomerLayout = () => {
                   <Button>Tính size xe</Button>
                 </Link>
                 <Link to="/products">
-                  <Button type="primary">Xem xe đang bán</Button>
+                  <Button type="primary">Khám phá sản phẩm</Button>
                 </Link>
               </Space>
             </Col>
@@ -471,14 +594,20 @@ export const CustomerLayout = () => {
           ))}
         </div>
       </Drawer>
-      <CustomerLoginModal
-        open={isLoginModalOpen}
-        onClose={() => {
-          setIsLoginModalOpen(false);
-          setPostLoginDestination(null);
-        }}
-        onLoginSuccess={handleLoginSuccess}
-      />
+      {hasOpenedLoginModal ? (
+        <Suspense fallback={
+          <Modal open={isLoginModalOpen} title="Đăng nhập" footer={null} centered onCancel={closeLoginModal}>
+            <Space role="status" aria-live="polite"><Spin /><span>Đang tải đăng nhập…</span></Space>
+          </Modal>
+        }>
+          <CustomerLoginModal
+            open={isLoginModalOpen}
+            onClose={closeLoginModal}
+            onLoginSuccess={handleLoginSuccess}
+            redirectTo={postLoginDestination ?? undefined}
+          />
+        </Suspense>
+      ) : null}
       <FloatButton.BackTop
         className="store-back-to-top"
         visibilityHeight={360}

@@ -4,6 +4,7 @@ import { FullPageLoader } from '../components/common/full-page-loader';
 import { useAuthStore } from '../stores/auth.store';
 import { UserRole } from '../types/auth';
 import { getAdminLandingPath } from './admin-landing';
+import { getAuthRedirectPath } from './auth-redirect';
 
 interface GuestRouteProps {
   children: ReactNode;
@@ -29,5 +30,5 @@ export const GuestRoute = ({ children }: GuestRouteProps) => {
       ? getAdminLandingPath(user)
       : '/';
 
-  return <Navigate to={target} replace />;
+  return <Navigate to={getAuthRedirectPath(location.state, target)} replace />;
 };

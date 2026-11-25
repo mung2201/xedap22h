@@ -42,13 +42,13 @@ export const ProductSpecificationSchema = SchemaFactory.createForClass(
 export class ProductVariant {
   _id!: Types.ObjectId;
 
-  @Prop({ type: String, required: true, trim: true, maxlength: 80 })
+  @Prop({ type: String, trim: true, maxlength: 80, default: '' })
   color!: string;
 
   @Prop({ type: String, trim: true, maxlength: 16 })
   colorHex?: string;
 
-  @Prop({ type: String, required: true, trim: true, maxlength: 80 })
+  @Prop({ type: String, trim: true, maxlength: 80, default: '' })
   size!: string;
 
   @Prop({
@@ -122,16 +122,20 @@ export class Product {
   @Prop({ type: Boolean, default: false, index: true })
   featured!: boolean;
 
-  @Prop({ type: String, enum: BikeType, index: true })
+  // Public reference listings stay visible while their sale data is being checked.
+  @Prop({ type: Boolean, default: false })
+  catalogOnly!: boolean;
+
+  @Prop({ type: String, enum: BikeType, index: true, required: requiresBikeDetails })
   bikeType?: BikeType;
 
-  @Prop({ type: String, trim: true, maxlength: 120 })
+  @Prop({ type: String, trim: true, maxlength: 120, required: requiresBikeDetails })
   frameMaterial?: string;
 
-  @Prop({ type: String, trim: true, maxlength: 80 })
+  @Prop({ type: String, trim: true, maxlength: 80, required: requiresBikeDetails })
   wheelSize?: string;
 
-  @Prop({ type: String, trim: true, maxlength: 80 })
+  @Prop({ type: String, trim: true, maxlength: 80, required: requiresBikeDetails })
   weight?: string;
 
   @Prop({ type: [ProductSpecificationSchema], default: [] })
@@ -141,8 +145,34 @@ export class Product {
     type: [ProductVariantSchema],
     required: true,
     validate: {
-      validator: (variants: ProductVariant[]) => variants.length > 0,
-      message: 'A product must have at least one variant.',
+      validator: function (this: Product, variants: ProductVariant[]) {
+        if (!Array.isArray(variants) || (!this.catalogOnly && !variants.length)) {
+          return false;
+        }
+        const skus = new Set<string>([this.sku?.trim().toUpperCase()]);
+        const combinations = new Set<string>();
+        return variants.every((variant) => {
+          const sku = variant.sku?.trim().toUpperCase();
+          const color = variant.color?.trim().toLowerCase();
+          const size = variant.size?.trim().toLowerCase();
+          if (!sku || skus.has(sku) || (!this.catalogOnly && (!color || !size))) {
+            return false;
+          }
+          if (!Number.isInteger(variant.stock) || variant.stock < 0 ||
+            !Number.isInteger(variant.priceAdjustment ?? 0) ||
+            this.salePrice + (variant.priceAdjustment ?? 0) < 0) {
+            return false;
+          }
+          skus.add(sku);
+          if (color && size) {
+            const combination = `${color}::${size}`;
+            if (combinations.has(combination)) return false;
+            combinations.add(combination);
+          }
+          return true;
+        });
+      },
+      message: 'Variants must have unique SKUs and color/size pairs; products for sale require complete variants.',
     },
   })
   variants!: ProductVariant[];
@@ -160,10 +190,18 @@ export class Product {
   updatedAt!: Date;
 }
 
+function requiresBikeDetails(this: Product): boolean {
+  return this.productType === ProductType.BICYCLE && !this.catalogOnly;
+}
+
 export const ProductSchema = SchemaFactory.createForClass(Product);
 ProductSchema.index({ slug: 1 }, { unique: true });
 ProductSchema.index({ sku: 1 }, { unique: true });
-ProductSchema.index({ 'variants.sku': 1 }, { unique: true });
+ProductSchema.index({ 'variants.sku': 1 }, {
+  unique: true,
+  name: 'variants_sku_unique_nonempty',
+  partialFilterExpression: { 'variants.sku': { $exists: true } },
+});
 ProductSchema.index({ category: 1, status: 1, salePrice: 1 });
 ProductSchema.index({ brand: 1, status: 1, salePrice: 1 });
 ProductSchema.index({ status: 1, featured: 1, createdAt: -1 });

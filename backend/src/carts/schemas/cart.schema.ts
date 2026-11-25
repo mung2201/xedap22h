@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument, Types } from 'mongoose';
+import { HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
 
 export type CartDocument = HydratedDocument<Cart>;
 
@@ -7,10 +7,10 @@ export type CartDocument = HydratedDocument<Cart>;
 export class CartItem {
   _id!: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'Product', required: true })
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Product', required: true })
   product!: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, required: true })
+  @Prop({ type: MongooseSchema.Types.ObjectId, required: true })
   variantId!: Types.ObjectId;
 
   @Prop({ type: Number, required: true, min: 1, max: 99 })
@@ -47,8 +47,9 @@ export const CartItemSchema = SchemaFactory.createForClass(CartItem);
 
 @Schema({ collection: 'carts', timestamps: true, versionKey: false })
 export class Cart {
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-  user!: Types.ObjectId;
+  // Existing cart/wishlist owners are stored as strings; keep their persisted type.
+  @Prop({ type: String, ref: 'User', required: true })
+  user!: string;
 
   @Prop({ type: [CartItemSchema], default: [] })
   items!: CartItem[];

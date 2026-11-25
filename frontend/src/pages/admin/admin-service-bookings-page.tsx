@@ -4,6 +4,7 @@ import {
   SearchOutlined,
 } from '@ant-design/icons';
 import {
+  Alert,
   Button,
   Descriptions,
   Form,
@@ -19,7 +20,7 @@ import {
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { serviceBookingService } from '../../api/services/service-booking.service';
 import type {
   AdminServiceBookingQuery,
@@ -71,20 +72,37 @@ const formatDateTime = (value: string): string =>
 export const AdminServiceBookingsPage = () => {
   const [result, setResult] = useState<ServiceBookingListResult | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState('');
   const [keyword, setKeyword] = useState<string>();
   const [status, setStatus] = useState<ServiceBookingStatus>();
   const [serviceType, setServiceType] = useState<ServiceBookingType>();
-  const [selectedBooking, setSelectedBooking] = useState<ServiceBooking | null>(null);
+  const [detailBooking, setDetailBooking] = useState<ServiceBooking | null>(null);
+  const [statusBooking, setStatusBooking] = useState<ServiceBooking | null>(null);
+  const [loadingDetailId, setLoadingDetailId] = useState<string | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
   const [statusForm] = Form.useForm<StatusFormValues>();
   const nextStatus = Form.useWatch('status', statusForm);
+  const loadSequence = useRef(0);
+  const detailSequence = useRef(0);
+  const isMounted = useRef(false);
+  const savingRef = useRef(false);
+
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+      detailSequence.current += 1;
+    };
+  }, []);
 
   const loadBookings = useCallback(async (): Promise<void> => {
+    const sequence = ++loadSequence.current;
     setIsLoading(true);
+    setErrorMessage(null);
     try {
       const query: AdminServiceBookingQuery = {
         page,
@@ -93,55 +111,88 @@ export const AdminServiceBookingsPage = () => {
         ...(status ? { status } : {}),
         ...(serviceType ? { serviceType } : {}),
       };
-      setResult(await serviceBookingService.getAdminList(query));
+      const nextResult = await serviceBookingService.getAdminList(query);
+      if (sequence === loadSequence.current) setResult(nextResult);
     } catch (error) {
-      message.error(getErrorMessage(error));
+      if (sequence === loadSequence.current) {
+        setErrorMessage(getErrorMessage(error));
+        setResult(null);
+      }
     } finally {
-      setIsLoading(false);
+      if (sequence === loadSequence.current) setIsLoading(false);
     }
   }, [keyword, page, serviceType, status]);
 
   useEffect(() => {
     void loadBookings();
+    return () => { loadSequence.current += 1; };
   }, [loadBookings]);
 
   const openDetail = async (booking: ServiceBooking): Promise<void> => {
+    if (savingRef.current) return;
+    const sequence = ++detailSequence.current;
+    setLoadingDetailId(booking.id);
     try {
-      setSelectedBooking(await serviceBookingService.getAdminById(booking.id));
-      setIsDetailOpen(true);
+      const nextBooking = await serviceBookingService.getAdminById(booking.id);
+      if (isMounted.current && sequence === detailSequence.current) {
+        setDetailBooking(nextBooking);
+        setIsDetailOpen(true);
+      }
     } catch (error) {
-      message.error(getErrorMessage(error));
+      if (isMounted.current && sequence === detailSequence.current) {
+        message.error(getErrorMessage(error));
+      }
+    } finally {
+      if (isMounted.current && sequence === detailSequence.current) {
+        setLoadingDetailId(null);
+      }
     }
   };
 
+  const closeDetail = (): void => {
+    detailSequence.current += 1;
+    setLoadingDetailId(null);
+    setIsDetailOpen(false);
+  };
+
   const openStatusModal = (booking: ServiceBooking): void => {
-    setSelectedBooking(booking);
+    if (savingRef.current) return;
+    closeDetail();
+    setStatusBooking(booking);
     statusForm.resetFields();
     const options = nextStatuses[booking.status];
     statusForm.setFieldsValue({ status: options[0] });
     setIsStatusModalOpen(true);
   };
 
+  const closeStatusModal = (): void => {
+    if (savingRef.current) return;
+    setIsStatusModalOpen(false);
+  };
+
   const updateStatus = async (values: StatusFormValues): Promise<void> => {
-    if (!selectedBooking) {
+    if (!statusBooking || savingRef.current) {
       return;
     }
 
+    savingRef.current = true;
     setIsSaving(true);
     try {
-      await serviceBookingService.updateAdminStatus(selectedBooking.id, {
+      await serviceBookingService.updateAdminStatus(statusBooking.id, {
         status: values.status,
         note: values.note?.trim() || undefined,
         adminNote: values.adminNote?.trim() || undefined,
       });
+      if (!isMounted.current) return;
       message.success('Đã cập nhật lịch hẹn.');
       setIsStatusModalOpen(false);
       statusForm.resetFields();
       await loadBookings();
     } catch (error) {
-      message.error(getErrorMessage(error));
+      if (isMounted.current) message.error(getErrorMessage(error));
     } finally {
-      setIsSaving(false);
+      savingRef.current = false;
+      if (isMounted.current) setIsSaving(false);
     }
   };
 
@@ -151,7 +202,14 @@ export const AdminServiceBookingsPage = () => {
         dataIndex: 'bookingCode',
         key: 'bookingCode',
         render: (value: string, booking) => (
-          <Button type="link" onClick={() => void openDetail(booking)}>{value}</Button>
+          <Button
+            type="link"
+            loading={loadingDetailId === booking.id}
+            disabled={isSaving}
+            onClick={() => void openDetail(booking)}
+          >
+            {value}
+          </Button>
         ),
       },
       {
@@ -194,11 +252,17 @@ export const AdminServiceBookingsPage = () => {
         fixed: 'right',
         render: (_, booking) => (
           <Space>
-            <Button type="link" icon={<EyeOutlined />} onClick={() => void openDetail(booking)}>
+            <Button
+              type="link"
+              icon={<EyeOutlined />}
+              loading={loadingDetailId === booking.id}
+              disabled={isSaving}
+              onClick={() => void openDetail(booking)}
+            >
               Chi tiết
             </Button>
             {nextStatuses[booking.status].length ? (
-              <Button type="link" icon={<EditOutlined />} onClick={() => openStatusModal(booking)}>
+              <Button type="link" icon={<EditOutlined />} disabled={isSaving} onClick={() => openStatusModal(booking)}>
                 Cập nhật
               </Button>
             ) : null}
@@ -209,7 +273,7 @@ export const AdminServiceBookingsPage = () => {
 
   const bookings = result?.items ?? [];
   const meta = result?.meta;
-  const statusOptions = selectedBooking ? nextStatuses[selectedBooking.status] : [];
+  const statusOptions = statusBooking ? nextStatuses[statusBooking.status] : [];
 
   return (
     <section className="admin-page admin-service-bookings-page">
@@ -263,16 +327,38 @@ export const AdminServiceBookingsPage = () => {
             setPage(1);
           }}
         />
+        <Button
+          disabled={!searchInput && !keyword && !status && !serviceType}
+          onClick={() => {
+            setSearchInput('');
+            setKeyword(undefined);
+            setStatus(undefined);
+            setServiceType(undefined);
+            setPage(1);
+          }}
+        >
+          Xóa bộ lọc
+        </Button>
       </Space>
 
-      <Table
-        rowKey="id"
-        loading={isLoading}
-        columns={columns}
-        dataSource={bookings}
-        pagination={false}
-        scroll={{ x: 1080 }}
-      />
+      {errorMessage ? (
+        <Alert
+          type="error"
+          showIcon
+          message="Không thể tải lịch dịch vụ"
+          description={errorMessage}
+          action={<Button onClick={() => void loadBookings()}>Thử lại</Button>}
+        />
+      ) : (
+        <Table
+          rowKey="id"
+          loading={isLoading}
+          columns={columns}
+          dataSource={bookings}
+          pagination={false}
+          scroll={{ x: 1080 }}
+        />
+      )}
       {meta && (meta.totalPages ?? 1) > 1 ? (
         <Pagination
           className="admin-table-pagination"
@@ -285,48 +371,48 @@ export const AdminServiceBookingsPage = () => {
       ) : null}
 
       <Modal
-        title={selectedBooking ? `Chi tiết ${selectedBooking.bookingCode}` : 'Chi tiết lịch hẹn'}
+        title={detailBooking ? `Chi tiết ${detailBooking.bookingCode}` : 'Chi tiết lịch hẹn'}
         open={isDetailOpen}
-        footer={<Button onClick={() => setIsDetailOpen(false)}>Đóng</Button>}
+        footer={<Button onClick={closeDetail}>Đóng</Button>}
         width={760}
-        onCancel={() => setIsDetailOpen(false)}
+        onCancel={closeDetail}
       >
-        {selectedBooking ? (
+        {detailBooking ? (
           <Space direction="vertical" size="large" className="full-width">
             <Descriptions bordered column={{ xs: 1, sm: 2 }} size="small">
-              <Descriptions.Item label="Khách hàng">{selectedBooking.contact.name}</Descriptions.Item>
-              <Descriptions.Item label="Số điện thoại">{selectedBooking.contact.phone}</Descriptions.Item>
-              <Descriptions.Item label="Email">{selectedBooking.contact.email}</Descriptions.Item>
+              <Descriptions.Item label="Khách hàng">{detailBooking.contact.name}</Descriptions.Item>
+              <Descriptions.Item label="Số điện thoại">{detailBooking.contact.phone}</Descriptions.Item>
+              <Descriptions.Item label="Email">{detailBooking.contact.email}</Descriptions.Item>
               <Descriptions.Item label="Dịch vụ">
-                {serviceBookingTypeLabels[selectedBooking.serviceType]}
+                {serviceBookingTypeLabels[detailBooking.serviceType]}
               </Descriptions.Item>
               <Descriptions.Item label="Lịch mong muốn">
-                {formatDateTime(selectedBooking.preferredDate)} · {selectedBooking.preferredTimeSlot}
+                {formatDateTime(detailBooking.preferredDate)} · {detailBooking.preferredTimeSlot}
               </Descriptions.Item>
               <Descriptions.Item label="Trạng thái">
-                <Tag color={serviceStatusColor[selectedBooking.status]}>
-                  {serviceBookingStatusLabels[selectedBooking.status]}
+                <Tag color={serviceStatusColor[detailBooking.status]}>
+                  {serviceBookingStatusLabels[detailBooking.status]}
                 </Tag>
               </Descriptions.Item>
               <Descriptions.Item label="Khu vực / chi nhánh" span={2}>
-                {selectedBooking.serviceLocation}
+                {detailBooking.serviceLocation}
               </Descriptions.Item>
               <Descriptions.Item label="Xe" span={2}>
-                {[selectedBooking.bicycleBrand, selectedBooking.bicycleModel].filter(Boolean).join(' · ') || 'Chưa cung cấp'}
+                {[detailBooking.bicycleBrand, detailBooking.bicycleModel].filter(Boolean).join(' · ') || 'Chưa cung cấp'}
               </Descriptions.Item>
               <Descriptions.Item label="Yêu cầu" span={2}>
-                {selectedBooking.description}
+                {detailBooking.description}
               </Descriptions.Item>
-              {selectedBooking.adminNote ? (
+              {detailBooking.adminNote ? (
                 <Descriptions.Item label="Ghi chú nội bộ" span={2}>
-                  {selectedBooking.adminNote}
+                  {detailBooking.adminNote}
                 </Descriptions.Item>
               ) : null}
             </Descriptions>
             <div>
               <Typography.Title level={5}>Lịch sử xử lý</Typography.Title>
               <Timeline
-                items={selectedBooking.statusHistory.map((history) => ({
+                items={detailBooking.statusHistory.map((history) => ({
                   color: serviceStatusColor[history.status],
                   children: (
                     <Space direction="vertical" size={0}>
@@ -343,13 +429,16 @@ export const AdminServiceBookingsPage = () => {
       </Modal>
 
       <Modal
-        title={selectedBooking ? `Cập nhật ${selectedBooking.bookingCode}` : 'Cập nhật lịch hẹn'}
+        title={statusBooking ? `Cập nhật ${statusBooking.bookingCode}` : 'Cập nhật lịch hẹn'}
         open={isStatusModalOpen}
         footer={null}
         destroyOnHidden
-        onCancel={() => setIsStatusModalOpen(false)}
+        closable={!isSaving}
+        maskClosable={!isSaving}
+        keyboard={!isSaving}
+        onCancel={closeStatusModal}
       >
-        <Form<StatusFormValues> form={statusForm} layout="vertical" onFinish={updateStatus}>
+        <Form<StatusFormValues> form={statusForm} layout="vertical" onFinish={updateStatus} disabled={isSaving}>
           <Form.Item name="status" label="Trạng thái mới" rules={[{ required: true }]}>
             <Select
               options={statusOptions.map((value) => ({
@@ -379,7 +468,7 @@ export const AdminServiceBookingsPage = () => {
           </Form.Item>
           <div className="modal-form-actions">
             <Space>
-              <Button onClick={() => setIsStatusModalOpen(false)}>Hủy</Button>
+              <Button onClick={closeStatusModal} disabled={isSaving}>Hủy</Button>
               <Button type="primary" htmlType="submit" loading={isSaving}>
                 Lưu trạng thái
               </Button>

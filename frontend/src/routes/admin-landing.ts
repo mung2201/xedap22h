@@ -10,6 +10,7 @@ const staffLandingRoutes: Array<{ permission: Permission; path: string }> = [
   { permission: Permission.MANAGE_VOUCHERS, path: '/admin/vouchers' },
   { permission: Permission.MANAGE_CMS, path: '/admin/banners' },
   { permission: Permission.MANAGE_CHATBOT, path: '/admin/chatbot/faqs' },
+  { permission: Permission.MANAGE_SERVICE_BOOKINGS, path: '/admin/service-bookings' },
 ];
 
 export const getAdminLandingPath = (user: CurrentUser): string => {

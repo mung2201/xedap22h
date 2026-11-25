@@ -1574,7 +1574,32 @@ a {
     margin: 16px 0 0;
   }
 
+  .wishlist-list .ant-list-item-meta {
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .wishlist-list .ant-list-item-meta-avatar {
+    margin-inline-end: 0;
+  }
+
+  .wishlist-list .ant-list-item-meta-content,
+  .wishlist-list .ant-list-item-meta-description > .ant-space,
+  .wishlist-purchase-controls,
+  .wishlist-purchase-controls > .ant-space-item {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .wishlist-purchase-controls .ant-btn {
+    width: 100%;
+  }
+
   .wishlist-variant-select {
+    min-width: 0;
     width: 100%;
   }
 
@@ -1605,8 +1630,36 @@ a {
   }
 
   .order-item-list .ant-list-item {
-    align-items: flex-start;
+    align-items: stretch;
     flex-direction: column;
+  }
+
+  .order-item-list .ant-list-item-meta {
+    width: 100%;
+    min-width: 0;
+    flex: none;
+  }
+
+  .order-item-list .ant-list-item-meta-avatar {
+    margin-inline-end: 12px;
+  }
+
+  .order-item-list .ant-list-item-meta-avatar .ant-image {
+    width: 64px !important;
+    height: 56px !important;
+  }
+
+  .order-item-list .ant-list-item-meta-avatar img {
+    object-fit: contain;
+  }
+
+  .order-item-list .ant-list-item-meta-content {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .order-item-list .ant-list-item > .ant-space {
+    align-self: flex-end;
   }
 
   .order-total-card {
@@ -1618,10 +1671,31 @@ a {
   }
 }
 
+@media (max-width: 480px) {
+  .order-detail-page .ant-descriptions-item-container,
+  .admin-order-detail-page .ant-descriptions-item-container {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .order-detail-page .checkout-total-row,
+  .admin-order-detail-page .checkout-total-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .order-detail-page .checkout-total-row h3.ant-typography,
+  .admin-order-detail-page .checkout-total-row h3.ant-typography {
+    margin: 0;
+    font-size: clamp(20px, 6vw, 24px);
+  }
+}
+
 .faq-chatbot-floating {
   position: fixed;
   right: 24px;
-  bottom: 24px;
+  bottom: max(24px, env(safe-area-inset-bottom));
   z-index: 900;
   display: flex;
   flex-direction: column;
@@ -1630,6 +1704,7 @@ a {
 }
 
 .faq-chatbot-toggle {
+  flex: 0 0 auto;
   width: 54px !important;
   height: 54px !important;
   font-size: 22px;
@@ -1641,6 +1716,8 @@ a {
   flex-direction: column;
   width: min(380px, calc(100vw - 32px));
   max-height: min(610px, calc(100vh - 104px));
+  max-height: min(610px, calc(100dvh - 104px - env(safe-area-inset-bottom)));
+  min-height: 0;
   overflow: hidden;
   background: #ffffff;
   border: 1px solid #dbeafe;
@@ -1648,8 +1725,18 @@ a {
   box-shadow: 0 20px 46px rgba(15, 23, 42, 0.2);
 }
 
+.faq-chatbot-floating-open {
+  z-index: 990;
+}
+
+.faq-chatbot-panel:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
+}
+
 .faq-chatbot-header {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
@@ -1686,14 +1773,19 @@ a {
   border-radius: 50%;
 }
 
+.faq-chatbot-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .faq-chatbot-messages {
   display: flex;
-  flex: 1;
   flex-direction: column;
   gap: 12px;
   min-height: 240px;
   padding: 16px;
-  overflow-y: auto;
   background: #f8fafc;
 }
 
@@ -1708,6 +1800,7 @@ a {
 
 .faq-chatbot-message .ant-typography {
   color: inherit;
+  overflow-wrap: anywhere;
   white-space: pre-line;
 }
 
@@ -1782,6 +1875,7 @@ a {
 
 .faq-chatbot-composer {
   display: flex;
+  flex: 0 0 auto;
   align-items: flex-end;
   gap: 10px;
   padding: 12px 16px 16px;
@@ -1790,6 +1884,7 @@ a {
 }
 
 .faq-chatbot-composer .ant-input {
+  min-width: 0;
   resize: none;
 }
 
@@ -1806,6 +1901,16 @@ a {
   padding: 14px 16px 16px;
   overflow-y: auto;
   background: #f8fafc;
+}
+
+.faq-chatbot-panel > .recommendation-chatbot-flow {
+  flex: 1 1 auto;
+  min-height: 0;
+  overscroll-behavior: contain;
+}
+
+.faq-chatbot-panel > .recommendation-chatbot-flow > * {
+  flex-shrink: 0;
 }
 
 .recommendation-chatbot-flow > .ant-btn-link {
@@ -1999,15 +2104,12 @@ a {
 
   .faq-chatbot-floating {
     right: 16px;
-    bottom: 16px;
+    bottom: max(16px, env(safe-area-inset-bottom));
   }
 
   .faq-chatbot-panel {
     max-height: calc(100vh - 92px);
-  }
-
-  .faq-chatbot-messages {
-    min-height: 210px;
+    max-height: calc(100dvh - 92px - env(safe-area-inset-bottom));
   }
 
   .recommendation-chatbot-options {
@@ -2038,5 +2140,46 @@ a {
   .qr-payment-code svg {
     width: min(100%, 230px);
     height: auto;
+  }
+}
+
+/* Shared loading and keyboard access for route changes. */
+.route-page-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 320px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.auth-page.auth-page-admin {
+  min-height: 100dvh;
+  padding: 36px 20px;
+  background: radial-gradient(ellipse at 50% 0%, #e5eaff, transparent 65%), #f5f6fa;
+}
+.auth-page-admin .auth-card { max-width: 440px; border-color: #e3e7f0; box-shadow: 0 20px 60px #1e293b0a; }
+.auth-page-admin .auth-card .ant-card-body { padding: 36px; }
+.admin-login-brand { display: grid; justify-items: center; gap: 8px; margin-bottom: 30px; }
+.admin-login-brand > span { display: grid; place-items: center; width: 48px; height: 48px; color: #4f46e5; background: #eeedff; border: 1px solid #dfddfb; border-radius: 14px; font-size: 23px; }
+.admin-login-brand strong { color: #172033; font-size: 21px; letter-spacing: -.5px; }
+.admin-login-brand small { color: #64748b; font-size: 10px; letter-spacing: 1.3px; }
+.auth-page-admin h2.ant-typography { margin: 0 0 8px; font-size: 25px; text-align: center; letter-spacing: -.5px; }
+.auth-page-admin .ant-typography-secondary { margin-bottom: 28px; text-align: center; }
+.auth-page-admin .ant-input-prefix { margin-right: 9px; color: #94a3b8; }
+.auth-page-admin .auth-form-actions { display: none; }
+.admin-login-back { display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 24px; color: #64748b; font-size: 13px; text-decoration: none; }
+.admin-login-back:hover { color: #3155c6; }
+@media (max-width: 480px) {
+  .auth-page-admin .auth-card .ant-card-body { padding: 28px 22px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .admin-layout *, .admin-navigation-drawer *, .auth-page-admin *, .route-page-loading * {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
   }
 }

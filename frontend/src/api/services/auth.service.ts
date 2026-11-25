@@ -13,8 +13,17 @@ interface AuthRequestConfig extends AxiosRequestConfig {
   skipAuthRefresh?: boolean;
 }
 
+let pendingLogout: Promise<void> | null = null;
+
+// Cookie changes are applied by the browser before response interceptors run.
+// Finish clearing the old cookie before requesting a new login/registration.
+const waitForLogout = async (): Promise<void> => {
+  if (pendingLogout) await pendingLogout.catch(() => undefined);
+};
+
 export const authService = {
   async register(payload: RegisterPayload): Promise<AuthSession> {
+    await waitForLogout();
     const config: AuthRequestConfig = {
       skipAuthRefresh: true,
     };
@@ -27,6 +36,7 @@ export const authService = {
   },
 
   async login(payload: LoginPayload): Promise<AuthSession> {
+    await waitForLogout();
     const config: AuthRequestConfig = {
       skipAuthRefresh: true,
     };
@@ -43,10 +53,18 @@ export const authService = {
   },
 
   async logout(): Promise<void> {
+    if (pendingLogout) return pendingLogout;
     const config: AuthRequestConfig = {
       skipAuthRefresh: true,
+      timeout: 15_000,
     };
-    await apiClient.post<ApiResponse<null>>('/auth/logout', {}, config);
+    const request = apiClient.post<ApiResponse<null>>('/auth/logout', {}, config)
+      .then(() => undefined)
+      .finally(() => {
+        if (pendingLogout === request) pendingLogout = null;
+      });
+    pendingLogout = request;
+    await request;
   },
 
   async logoutAll(): Promise<void> {

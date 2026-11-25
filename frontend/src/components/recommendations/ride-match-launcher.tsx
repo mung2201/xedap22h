@@ -14,17 +14,17 @@ const quickRideLinks = [
   {
     label: 'Đi làm hằng ngày',
     detail: 'Êm ái, thực dụng',
-    to: `/products?bikeType=${BikeType.CITY}&inStock=true`,
+    to: `/products?bikeType=${BikeType.CITY}`,
   },
   {
     label: 'Khám phá địa hình',
     detail: 'Bền bỉ, kiểm soát tốt',
-    to: `/products?bikeType=${BikeType.MOUNTAIN}&inStock=true`,
+    to: `/products?bikeType=${BikeType.MOUNTAIN}`,
   },
   {
     label: 'Tăng tốc đường trường',
     detail: 'Nhẹ, tối ưu tốc độ',
-    to: `/products?bikeType=${BikeType.ROAD}&inStock=true`,
+    to: `/products?bikeType=${BikeType.ROAD}`,
   },
 ];
 
@@ -37,20 +37,20 @@ export const RideMatchLauncher = () => {
         <div className="ride-match-shell">
           <div className="ride-match-copy">
             <span className="ride-match-kicker">
-              <CompassOutlined /> RIDE MATCH · 30 GIÂY
+              <CompassOutlined /> TƯ VẤN CHỌN XE
             </span>
             <Typography.Title id="ride-match-title" level={2}>
               Chọn xe theo hành trình của bạn.
             </Typography.Title>
             <Typography.Paragraph className="ride-match-description">
-              Trợ lý XeDap22h đối chiếu nhu cầu di chuyển, ngân sách, chiều cao và tồn kho
-              thực tế để đề xuất chiếc xe có thể mua ngay.
+              Khám phá xe theo nhu cầu di chuyển hoặc tính size theo chiều cao.
+              Trợ lý tư vấn đối chiếu ngân sách, size và tồn kho để gợi ý các mẫu đã mở bán.
             </Typography.Paragraph>
 
             <div className="ride-match-proof-list">
               <span><CheckCircleFilled /> Không chọn ngẫu nhiên</span>
               <span><CheckCircleFilled /> Có đối chiếu size</span>
-              <span><CheckCircleFilled /> Chỉ hiện xe còn hàng</span>
+              <span><CheckCircleFilled /> Kiểm tra tồn kho trước khi mua</span>
             </div>
 
             <Space wrap size="middle" className="ride-match-actions">

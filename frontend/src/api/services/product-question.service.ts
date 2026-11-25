@@ -58,10 +58,11 @@ export const productQuestionService = {
 
   async getMine(
     query: MyProductQuestionQuery = {},
+    signal?: AbortSignal,
   ): Promise<ProductQuestionListResult> {
     const response = await apiClient.get<ApiResponse<ProductQuestion[]>>(
       '/product-questions/mine',
-      { params: query },
+      { params: query, signal },
     );
     return toProductQuestionList(response.data);
   },

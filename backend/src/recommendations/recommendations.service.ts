@@ -273,6 +273,7 @@ export class RecommendationsService {
     const allProducts = await this.productModel
       .find({
         status: ProductStatus.ACTIVE,
+        catalogOnly: { $ne: true },
         productType: ProductType.BICYCLE,
         category: { $in: publicCategoryIds },
         brand: { $in: activeBrandIds },

@@ -1,0 +1,142 @@
+.product-scroll-rail {
+  --product-scroll-gap: 20px;
+  min-width: 0;
+}
+
+.product-scroll-track {
+  position: relative;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: calc((100% - (var(--product-scroll-count) - 1) * var(--product-scroll-gap)) / var(--product-scroll-count));
+  gap: var(--product-scroll-gap);
+  align-items: stretch;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding-block: 4px 14px;
+  margin-block: -4px -14px;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  border-radius: 8px;
+}
+
+.product-scroll-track::-webkit-scrollbar {
+  display: none;
+}
+
+.product-scroll-track:focus-visible {
+  outline: 2px solid var(--x22-blue, #3155c6);
+  outline-offset: 5px;
+}
+
+.product-scroll-item {
+  min-width: 0;
+  scroll-snap-align: start;
+}
+
+.product-scroll-item > .product-card {
+  height: 100%;
+}
+
+.product-scroll-footer {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding-top: 22px;
+  color: #52647a;
+}
+
+.product-scroll-range {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.product-scroll-range strong {
+  color: #243957;
+  font-weight: 650;
+}
+
+.product-scroll-progress {
+  position: relative;
+  flex: 1;
+  height: 2px;
+  overflow: hidden;
+  background: #dde4ee;
+  border-radius: 2px;
+}
+
+.product-scroll-progress > span {
+  position: absolute;
+  inset-block: 0;
+  background: var(--x22-blue, #3155c6);
+  border-radius: inherit;
+  transition: left 220ms ease, width 220ms ease;
+}
+
+.product-scroll-controls {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.product-scroll-controls button {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  color: #243957;
+  font-size: 15px;
+  cursor: pointer;
+  background: #ffffff;
+  border: 1px solid #d8e1ed;
+  border-radius: 50%;
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
+}
+
+.product-scroll-controls button:hover:not(:disabled) {
+  color: #ffffff;
+  background: var(--x22-blue, #3155c6);
+  border-color: var(--x22-blue, #3155c6);
+}
+
+.product-scroll-controls button:focus-visible {
+  outline: 2px solid var(--x22-blue, #3155c6);
+  outline-offset: 3px;
+}
+
+.product-scroll-controls button:disabled {
+  color: #a5b0bf;
+  cursor: default;
+  background: transparent;
+  border-color: #e0e6ee;
+}
+
+.product-scroll-controls .product-scroll-toggle {
+  color: #52647a;
+  background: transparent;
+  border-color: transparent;
+}
+
+@media (max-width: 767px) {
+  .product-scroll-rail {
+    --product-scroll-gap: 14px;
+  }
+
+  .product-scroll-footer {
+    gap: 12px;
+    padding-top: 18px;
+  }
+
+  .product-scroll-controls {
+    gap: 6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .product-scroll-progress > span,
+  .product-scroll-controls button {
+    transition: none;
+  }
+}

@@ -9,6 +9,7 @@ import {
 import { Card, Menu, Space, Typography } from 'antd';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth.store';
+import { PageBackNavigation } from '../components/common/page-back-navigation';
 import { UserRole } from '../types/auth';
 
 export const AccountLayout = () => {
@@ -17,6 +18,7 @@ export const AccountLayout = () => {
 
   return (
     <main className="page-container account-page">
+      <PageBackNavigation />
       <Space direction="vertical" size="large" className="full-width">
         <div>
           <Typography.Title level={2}>

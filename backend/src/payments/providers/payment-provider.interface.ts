@@ -1,4 +1,6 @@
 import { PaymentMethod, PaymentStatus } from '../../common/enums/commerce.enum';
+import { MomoCreateRequest, MomoEnvironment } from './momo-payment.types';
+import { PayosCreateRequest, PayosPaymentStatus } from './payos-payment.types';
 
 export interface PaymentInitiationInput {
   orderCode: string;
@@ -6,7 +8,7 @@ export interface PaymentInitiationInput {
   customerId: string;
 }
 
-export type QrPaymentMode = 'SANDBOX' | 'VIETQR';
+export type QrPaymentMode = 'SANDBOX' | 'VIETQR' | 'MOMO' | 'PAYOS';
 
 export interface QrPaymentInstruction {
   mode: QrPaymentMode;
@@ -20,10 +22,18 @@ export interface QrPaymentInstruction {
   bankBin?: string;
   accountNumber?: string;
   accountName?: string;
+  gatewayUrl?: string;
+  environment?: MomoEnvironment;
+  paymentStarted?: boolean;
+  paymentLinkId?: string;
+  expiresAt?: string;
+  gatewayStatus?: PayosPaymentStatus;
+  amountPaid?: number;
 }
 
 export interface PaymentInstructionInput extends PaymentInitiationInput {
   paymentReference: string;
+  provider?: string;
 }
 
 export interface PaymentInitiationResult {
@@ -31,6 +41,8 @@ export interface PaymentInitiationResult {
   paymentStatus: PaymentStatus;
   paymentReference?: string;
   paymentUrl?: string;
+  momoRequest?: MomoCreateRequest;
+  payosRequest?: PayosCreateRequest;
 }
 
 export interface PaymentProvider {

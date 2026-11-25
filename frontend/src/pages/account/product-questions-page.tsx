@@ -4,6 +4,7 @@ import {
   ReloadOutlined,
 } from '@ant-design/icons';
 import {
+  Alert,
   Button,
   Empty,
   Image,
@@ -17,9 +18,10 @@ import {
   Typography,
   message,
 } from 'antd';
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { productQuestionService } from '../../api/services/product-question.service';
+import { useAuthStore } from '../../stores/auth.store';
 import {
   ProductQuestionStatus,
   type ProductQuestion,
@@ -41,39 +43,68 @@ const formatDate = (value: string): string =>
   }).format(new Date(value));
 
 export const ProductQuestionsPage = () => {
+  const userId = useAuthStore((state) => state.user?.id);
   const [result, setResult] = useState<ProductQuestionListResult | null>(null);
   const [status, setStatus] = useState<ProductQuestionStatus>();
   const [page, setPage] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const loadController = useRef<AbortController | null>(null);
+  const mutationPending = useRef(false);
 
-  const loadQuestions = useCallback(async (): Promise<void> => {
-    setIsLoading(true);
-    try {
-      setResult(
-        await productQuestionService.getMine({
+  useEffect(() => {
+    const controller = new AbortController();
+    loadController.current = controller;
+    mutationPending.current = false;
+    setRemovingId(null);
+    const loadQuestions = async (): Promise<void> => {
+      setIsLoading(true);
+      setErrorMessage(null);
+      setResult(null);
+      try {
+        const nextResult = await productQuestionService.getMine({
           page,
           limit: 10,
           ...(status ? { status } : {}),
-        }),
-      );
-    } catch (error) {
-      message.error(getErrorMessage(error));
-    } finally {
-      setIsLoading(false);
-    }
-  }, [page, status]);
+        }, controller.signal);
+        if (controller.signal.aborted) return;
+        const lastPage = Math.max(1, nextResult.meta.totalPages
+          ?? Math.ceil((nextResult.meta.total ?? nextResult.items.length) / (nextResult.meta.limit ?? 10)));
+        if (page > lastPage) {
+          setPage(lastPage);
+          return;
+        }
+        setResult(nextResult);
+      } catch (error) {
+        if (!controller.signal.aborted) setErrorMessage(getErrorMessage(error));
+      } finally {
+        if (!controller.signal.aborted) setIsLoading(false);
+      }
+    };
 
-  useEffect(() => {
     void loadQuestions();
-  }, [loadQuestions]);
+    return () => controller.abort();
+  }, [page, status, reloadKey, userId]);
 
   const removeQuestion = async (question: ProductQuestion): Promise<void> => {
+    const signal = loadController.current?.signal;
+    if (mutationPending.current || !signal || signal.aborted) return;
+    mutationPending.current = true;
+    setRemovingId(question.id);
     try {
       await productQuestionService.removeMine(question.id);
+      if (signal.aborted) return;
       message.success('Đã xóa câu hỏi đang chờ phản hồi.');
-      await loadQuestions();
+      setReloadKey((value) => value + 1);
     } catch (error) {
-      message.error(getErrorMessage(error));
+      if (!signal.aborted) message.error(getErrorMessage(error));
+    } finally {
+      if (!signal.aborted) {
+        mutationPending.current = false;
+        setRemovingId(null);
+      }
     }
   };
 
@@ -89,7 +120,12 @@ export const ProductQuestionsPage = () => {
             Theo dõi phản hồi tư vấn từ cửa hàng. Khi có câu trả lời, shop cũng gửi thông báo qua email.
           </Typography.Text>
         </div>
-        <Button icon={<ReloadOutlined />} onClick={() => void loadQuestions()}>
+        <Button
+          icon={<ReloadOutlined />}
+          loading={isLoading}
+          disabled={removingId !== null}
+          onClick={() => setReloadKey((value) => value + 1)}
+        >
           Làm mới
         </Button>
       </div>
@@ -99,6 +135,7 @@ export const ProductQuestionsPage = () => {
         className="account-question-status-filter"
         placeholder="Tất cả trạng thái"
         value={status}
+        disabled={removingId !== null}
         options={Object.values(ProductQuestionStatus).map((value) => ({
           value,
           label: productQuestionStatusLabels[value],
@@ -111,6 +148,14 @@ export const ProductQuestionsPage = () => {
 
       {isLoading ? (
         <div className="account-question-loading"><Spin /></div>
+      ) : errorMessage ? (
+        <Alert
+          type="error"
+          showIcon
+          message="Không thể tải câu hỏi của bạn"
+          description={errorMessage}
+          action={<Button onClick={() => setReloadKey((value) => value + 1)}>Thử lại</Button>}
+        />
       ) : items.length ? (
         <>
           <List
@@ -127,9 +172,20 @@ export const ProductQuestionsPage = () => {
                           description="Bạn chỉ có thể xóa câu hỏi khi shop chưa phản hồi."
                           okText="Xóa"
                           cancelText="Hủy"
-                          onConfirm={() => void removeQuestion(question)}
+                          disabled={removingId !== null}
+                          okButtonProps={{ loading: removingId === question.id }}
+                          cancelButtonProps={{ disabled: removingId !== null }}
+                          onConfirm={() => removeQuestion(question)}
                         >
-                          <Button danger type="link" icon={<DeleteOutlined />}>Xóa</Button>
+                          <Button
+                            danger
+                            type="link"
+                            icon={<DeleteOutlined />}
+                            disabled={removingId !== null}
+                            loading={removingId === question.id}
+                          >
+                            Xóa
+                          </Button>
                         </Popconfirm>,
                       ]
                     : undefined
@@ -170,6 +226,7 @@ export const ProductQuestionsPage = () => {
               pageSize={meta.limit ?? 10}
               total={meta.total}
               showSizeChanger={false}
+              disabled={removingId !== null}
               onChange={setPage}
             />
           ) : null}
@@ -178,7 +235,7 @@ export const ProductQuestionsPage = () => {
         <Empty
           className="account-question-empty"
           image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description="Bạn chưa gửi câu hỏi nào."
+          description={status ? 'Không có câu hỏi ở trạng thái này.' : 'Bạn chưa gửi câu hỏi nào.'}
         />
       )}
     </section>

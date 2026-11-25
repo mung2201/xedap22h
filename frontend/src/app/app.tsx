@@ -6,16 +6,16 @@ import type { AuthSession } from '../types/auth';
 
 const AuthBootstrap = (): null => {
   const bootstrap = useAuthStore((state) => state.bootstrap);
-  const setSession = useAuthStore((state) => state.setSession);
+  const acceptRefreshedSession = useAuthStore((state) => state.acceptRefreshedSession);
   const clearSession = useAuthStore((state) => state.clearSession);
 
   useEffect(() => {
     void bootstrap();
 
     const onSessionRefreshed = (event: Event): void => {
-      const session = (event as CustomEvent<AuthSession>).detail;
+      const { session, generation } = (event as CustomEvent<{ session: AuthSession; generation: number }>).detail;
       if (session) {
-        setSession(session);
+        acceptRefreshedSession(session, generation);
       }
     };
     const onSessionExpired = (): void => clearSession();
@@ -27,7 +27,7 @@ const AuthBootstrap = (): null => {
       window.removeEventListener('auth:session-refreshed', onSessionRefreshed);
       window.removeEventListener('auth:session-expired', onSessionExpired);
     };
-  }, [bootstrap, clearSession, setSession]);
+  }, [bootstrap, clearSession, acceptRefreshedSession]);
 
   return null;
 };

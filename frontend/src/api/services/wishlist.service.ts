@@ -7,8 +7,8 @@ import type {
 } from '../../types/commerce';
 
 export const wishlistService = {
-  async getMine(): Promise<Wishlist> {
-    const response = await apiClient.get<ApiResponse<Wishlist>>('/wishlist');
+  async getMine(signal?: AbortSignal): Promise<Wishlist> {
+    const response = await apiClient.get<ApiResponse<Wishlist>>('/wishlist', { signal });
     return response.data.data;
   },
 

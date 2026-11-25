@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { authService } from '../api/services/auth.service';
-import { clearAccessToken, setAccessToken } from '../api/token.store';
+import { getAuthSessionGeneration, invalidateAuthSession, setAccessToken } from '../api/token.store';
 import type {
   AuthSession,
   LoginPayload,
@@ -13,6 +13,7 @@ interface AuthState {
   isAuthenticated: boolean;
   isBootstrapping: boolean;
   setSession: (session: AuthSession) => void;
+  acceptRefreshedSession: (session: AuthSession, generation: number) => void;
   clearSession: () => void;
   bootstrap: () => Promise<void>;
   login: (payload: LoginPayload) => Promise<AuthSession>;
@@ -21,53 +22,71 @@ interface AuthState {
   setUser: (user: CurrentUser) => void;
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
+let activeLogout: { generation: number; promise: Promise<void> } | null = null;
+
+export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   isAuthenticated: false,
   isBootstrapping: true,
 
   setSession: (session) => {
+    invalidateAuthSession();
+    setAccessToken(session.accessToken);
+    set({ user: session.user, isAuthenticated: true, isBootstrapping: false });
+  },
+
+  acceptRefreshedSession: (session, generation) => {
+    if (generation !== getAuthSessionGeneration()) return;
     setAccessToken(session.accessToken);
     set({ user: session.user, isAuthenticated: true, isBootstrapping: false });
   },
 
   clearSession: () => {
-    clearAccessToken();
+    invalidateAuthSession();
     set({ user: null, isAuthenticated: false, isBootstrapping: false });
   },
 
   bootstrap: async () => {
+    const generation = getAuthSessionGeneration();
     try {
       const session = await authService.refresh();
-      setAccessToken(session.accessToken);
-      set({ user: session.user, isAuthenticated: true, isBootstrapping: false });
+      get().acceptRefreshedSession(session, generation);
     } catch {
-      clearAccessToken();
-      set({ user: null, isAuthenticated: false, isBootstrapping: false });
+      if (generation === getAuthSessionGeneration()) get().clearSession();
     }
   },
 
   login: async (payload) => {
+    const generation = invalidateAuthSession();
+    set({ user: null, isAuthenticated: false, isBootstrapping: false });
     const session = await authService.login(payload);
-    setAccessToken(session.accessToken);
-    set({ user: session.user, isAuthenticated: true, isBootstrapping: false });
+    if (generation !== getAuthSessionGeneration()) {
+      throw new Error('Phiên đăng nhập đã thay đổi. Vui lòng thử lại.');
+    }
+    get().acceptRefreshedSession(session, generation);
     return session;
   },
 
   register: async (payload) => {
+    const generation = invalidateAuthSession();
+    set({ user: null, isAuthenticated: false, isBootstrapping: false });
     const session = await authService.register(payload);
-    setAccessToken(session.accessToken);
-    set({ user: session.user, isAuthenticated: true, isBootstrapping: false });
+    if (generation !== getAuthSessionGeneration()) {
+      throw new Error('Phiên đăng nhập đã thay đổi. Vui lòng thử lại.');
+    }
+    get().acceptRefreshedSession(session, generation);
     return session;
   },
 
   logout: async () => {
-    try {
-      await authService.logout();
-    } finally {
-      clearAccessToken();
-      set({ user: null, isAuthenticated: false, isBootstrapping: false });
-    }
+    if (activeLogout?.generation === getAuthSessionGeneration()) return activeLogout.promise;
+    const generation = invalidateAuthSession();
+    set({ user: null, isAuthenticated: false, isBootstrapping: false });
+    const promise = authService.logout().finally(() => {
+      if (activeLogout?.promise === promise) activeLogout = null;
+    });
+    activeLogout = { generation, promise };
+    await promise;
   },
 
   setUser: (user) => set({ user }),

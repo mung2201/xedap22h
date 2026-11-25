@@ -107,6 +107,7 @@ export interface Product {
   images: ProductImage[];
   thumbnail: string;
   status: ProductStatus;
+  catalogOnly?: boolean;
   featured: boolean;
   bikeType?: BikeType;
   frameMaterial?: string;
@@ -211,6 +212,7 @@ export interface ProductPayload {
   images: ProductImagePayload[];
   thumbnail: string;
   status?: ProductStatus;
+  catalogOnly?: boolean;
   featured?: boolean;
   bikeType?: BikeType;
   frameMaterial?: string;

@@ -1,5 +1,5 @@
 import { Button, Form, Input, Space, Typography, message } from 'antd';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { authService } from '../../api/services/auth.service';
 import { useAuthStore } from '../../stores/auth.store';
 import type { ChangePasswordPayload } from '../../types/auth';
@@ -8,9 +8,12 @@ import { getErrorMessage } from '../../utils/error-message';
 export const ChangePasswordPage = () => {
   const setSession = useAuthStore((state) => state.setSession);
   const [form] = Form.useForm<ChangePasswordPayload>();
+  const submitting = useRef(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async (values: ChangePasswordPayload): Promise<void> => {
+    if (submitting.current) return;
+    submitting.current = true;
     setIsSubmitting(true);
 
     try {
@@ -25,6 +28,7 @@ export const ChangePasswordPage = () => {
     } catch (error) {
       message.error(getErrorMessage(error));
     } finally {
+      submitting.current = false;
       setIsSubmitting(false);
     }
   };
@@ -43,6 +47,7 @@ export const ChangePasswordPage = () => {
         layout="vertical"
         onFinish={handleSubmit}
         className="profile-form"
+        disabled={isSubmitting}
       >
         <Form.Item
           label="Mật khẩu hiện tại"
@@ -84,9 +89,18 @@ export const ChangePasswordPage = () => {
         >
           <Input.Password autoComplete="new-password" />
         </Form.Item>
-        <Button type="primary" htmlType="submit" loading={isSubmitting}>
-          Cập nhật mật khẩu
-        </Button>
+        <Space wrap>
+          <Button type="primary" htmlType="submit" loading={isSubmitting}>
+            Cập nhật mật khẩu
+          </Button>
+          <Button
+            htmlType="button"
+            disabled={isSubmitting}
+            onClick={() => { if (!submitting.current) form.resetFields(); }}
+          >
+            Xóa nội dung
+          </Button>
+        </Space>
       </Form>
     </Space>
   );

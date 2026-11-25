@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { ClientSession, Model, Types } from 'mongoose';
 import { CartResponse, CartsService } from '../carts/carts.service';
 import { ProductResponse, ProductsService } from '../products/products.service';
 import { MoveWishlistToCartDto } from './dto/move-wishlist-to-cart.dto';
@@ -35,8 +35,13 @@ export class WishlistsService {
     private readonly cartsService: CartsService,
   ) {}
 
-  async findMine(userId: string): Promise<WishlistResponse> {
-    const wishlist = await this.wishlistModel.findOne({ user: userId }).exec();
+  async findMine(
+    userId: string,
+    session?: ClientSession,
+  ): Promise<WishlistResponse> {
+    const query = this.wishlistModel.findOne({ user: userId });
+    if (session) query.session(session);
+    const wishlist = await query.exec();
 
     if (!wishlist) {
       return this.emptyResponse();
@@ -54,7 +59,7 @@ export class WishlistsService {
 
     if (activeItems.length !== wishlist.items.length) {
       wishlist.items = activeItems;
-      await wishlist.save();
+      await wishlist.save(session ? { session } : undefined);
     }
 
     const items = activeItems.flatMap((item) => {
@@ -115,27 +120,38 @@ export class WishlistsService {
     productId: string,
     dto: MoveWishlistToCartDto,
   ): Promise<WishlistMoveToCartResponse> {
-    const wishlist = await this.wishlistModel.findOne({ user: userId }).exec();
-    const itemIndex = wishlist?.items.findIndex(
-      (item) => item.product.toString() === productId,
-    );
+    const session = await this.wishlistModel.db.startSession();
+    try {
+      return await session.withTransaction(async () => {
+        const wishlist = await this.wishlistModel
+          .findOne({ user: userId })
+          .session(session)
+          .exec();
+        const itemIndex = wishlist?.items.findIndex(
+          (item) => item.product.toString() === productId,
+        );
 
-    if (!wishlist || itemIndex === undefined || itemIndex < 0) {
-      throw new NotFoundException('Wishlist item not found.');
+        if (!wishlist || itemIndex === undefined || itemIndex < 0) {
+          throw new NotFoundException('Wishlist item not found.');
+        }
+
+        // Claim the wishlist item first. Concurrent moves retry this check;
+        // any later failure rolls back both this removal and the cart change.
+        wishlist.items.splice(itemIndex, 1);
+        await wishlist.save({ session });
+
+        // Prices, variant ownership and stock still come from ProductsService.
+        const cart = await this.cartsService.addItem(
+          userId,
+          { productId, variantId: dto.variantId, quantity: dto.quantity },
+          session,
+        );
+
+        return { cart, wishlist: await this.findMine(userId, session) };
+      });
+    } finally {
+      await session.endSession();
     }
-
-    // CartsService resolves price, product status, variant ownership, and stock
-    // directly from ProductsService before mutating the cart.
-    const cart = await this.cartsService.addItem(userId, {
-      productId,
-      variantId: dto.variantId,
-      quantity: dto.quantity,
-    });
-
-    wishlist.items.splice(itemIndex, 1);
-    await wishlist.save();
-
-    return { cart, wishlist: await this.findMine(userId) };
   }
 
   private async getOrCreateWishlist(userId: string): Promise<WishlistDocument> {

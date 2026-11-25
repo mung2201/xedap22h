@@ -1,0 +1,67 @@
+.page-back-navigation {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.page-back-navigation :is(.page-back-button, .page-home-button) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 108px;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 8px 15px;
+  color: #334763;
+  font-size: 14px;
+  font-weight: 600;
+  background: #fff;
+  border: 1px solid #dce3ed;
+  border-radius: 10px;
+  box-shadow: none;
+  text-decoration: none;
+}
+
+.page-back-navigation .page-back-button:not(:disabled):hover,
+.page-back-navigation .page-home-button:hover {
+  color: #3155c6;
+  background: #f0f4ff;
+  border-color: #aebfe9;
+}
+
+.page-back-navigation :is(.page-back-button, .page-home-button):focus-visible {
+  outline: 3px solid #8ea7e6;
+  outline-offset: 3px;
+}
+
+.page-back-navigation .page-back-button:disabled {
+  color: #8b95a5;
+  background: #f5f7fa;
+  border-color: #e5e9ef;
+}
+
+.account-page > .page-back-navigation,
+.admin-content > .page-back-navigation {
+  padding-top: 0;
+  padding-bottom: 20px;
+}
+
+.page-back-standalone {
+  min-height: 100dvh;
+  background: #f5f6fa;
+}
+
+.page-back-standalone > .auth-page {
+  min-height: calc(100dvh - 68px);
+}
+
+@media (max-width: 700px) {
+  .account-page > .page-back-navigation,
+  .admin-content > .page-back-navigation {
+    padding-bottom: 16px;
+  }
+}

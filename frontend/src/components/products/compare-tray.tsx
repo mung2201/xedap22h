@@ -1,14 +1,15 @@
 import { CloseOutlined, SwapOutlined } from '@ant-design/icons';
-import { Badge, Button, Image, Space, Typography } from 'antd';
-import { Link } from 'react-router-dom';
+import { Badge, Button, Space, Typography } from 'antd';
+import { Link, useLocation } from 'react-router-dom';
 import { useCompareStore } from '../../stores/compare.store';
 
 export const CompareTray = () => {
+  const { pathname } = useLocation();
   const items = useCompareStore((state) => state.items);
   const remove = useCompareStore((state) => state.remove);
   const clear = useCompareStore((state) => state.clear);
 
-  if (!items.length) {
+  if (!items.length || pathname.replace(/\/$/, '') === '/compare') {
     return null;
   }
 
@@ -26,7 +27,15 @@ export const CompareTray = () => {
       <div className="compare-tray-items">
         {items.map((item) => (
           <div key={item.id} className="compare-tray-item">
-            <Image preview={false} src={item.thumbnail} alt="" width={38} height={30} />
+            <img
+              src={item.thumbnail}
+              alt=""
+              width={38}
+              height={30}
+              loading="lazy"
+              decoding="async"
+              style={{ objectFit: 'contain', background: '#f5f6f7', borderRadius: 4 }}
+            />
             <Link to={`/products/${item.slug}`}>{item.name}</Link>
             <Button
               type="text"

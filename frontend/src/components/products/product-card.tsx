@@ -11,6 +11,7 @@ interface ProductCardProps {
 
 export const ProductCard = ({ product }: ProductCardProps) => {
   const addToCompare = useCompareStore((state) => state.add);
+  const isInStock = !product.catalogOnly && product.availableStock > 0;
 
   const addComparison = (): void => {
     const result = addToCompare(product);
@@ -34,17 +35,30 @@ export const ProductCard = ({ product }: ProductCardProps) => {
     cover={
       <div className="product-card-media">
         <Link to={`/products/${product.slug}`} className="product-card-image-link">
-          <img src={product.thumbnail} alt={product.name} className="product-card-image" />
+          <img
+            src={product.thumbnail}
+            alt={product.name}
+            className="product-card-image"
+            loading="lazy"
+            decoding="async"
+            width={500}
+            height={410}
+            onError={(event) => {
+              if (!event.currentTarget.src.endsWith('/images/product-placeholder.svg')) {
+                event.currentTarget.src = '/images/product-placeholder.svg';
+              }
+            }}
+          />
           <span className="product-card-image-overlay">
             Xem chi tiết <ArrowRightOutlined />
           </span>
         </Link>
-        {product.discountPercent > 0 ? (
-          <Tag color="blue" className="product-discount-tag">
+        {!product.catalogOnly && product.discountPercent > 0 ? (
+          <Tag color="gold" className="product-discount-tag">
             -{product.discountPercent}%
           </Tag>
         ) : null}
-        {product.isOnSale ? <span className="product-card-deal-label">DEAL HOT</span> : null}
+        {!product.catalogOnly && product.isOnSale ? <span className="product-card-deal-label">ƯU ĐÃI</span> : null}
       </div>
     }
   >
@@ -62,12 +76,13 @@ export const ProductCard = ({ product }: ProductCardProps) => {
         <Typography.Text strong className="product-sale-price">
           {formatCurrency(product.salePrice)}
         </Typography.Text>
-        {product.isOnSale ? (
+        {!product.catalogOnly && product.isOnSale ? (
           <Typography.Text delete type="secondary" className="product-original-price">
             {formatCurrency(product.originalPrice)}
           </Typography.Text>
         ) : null}
       </div>
+      {product.catalogOnly ? <Typography.Text type="secondary">Giá tham khảo</Typography.Text> : null}
       <div className="product-card-footer">
         <Space size={4} className="product-card-rating">
           <StarFilled />
@@ -76,13 +91,18 @@ export const ProductCard = ({ product }: ProductCardProps) => {
           </Typography.Text>
           {product.reviewCount > 0 ? <Typography.Text>({product.reviewCount})</Typography.Text> : null}
         </Space>
-        <Typography.Text type={product.availableStock > 0 ? 'secondary' : 'danger'}>
-          {product.soldCount > 0
-            ? `Đã bán ${product.soldCount}`
-            : product.availableStock > 0
-              ? 'Còn hàng'
-              : 'Hết hàng'}
-        </Typography.Text>
+        <div className="product-card-availability">
+          <Typography.Text
+            className={`product-card-stock ${product.catalogOnly ? '' : isInStock ? 'is-available' : 'is-unavailable'}`}
+          >
+            {product.catalogOnly ? 'Liên hệ tư vấn' : isInStock ? 'Còn hàng' : 'Hết hàng'}
+          </Typography.Text>
+          {product.soldCount > 0 ? (
+            <Typography.Text type="secondary" className="product-card-sold-count">
+              Đã bán {product.soldCount}
+            </Typography.Text>
+          ) : null}
+        </div>
       </div>
       {product.productType === ProductType.BICYCLE ? (
         <Button

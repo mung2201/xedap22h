@@ -1,4 +1,5 @@
 import * as Joi from 'joi';
+import { isPublicMomoIpnUrl } from '../payments/providers/momo-payment.provider';
 
 export const envValidationSchema = Joi.object({
   NODE_ENV: Joi.string()
@@ -24,6 +25,17 @@ export const envValidationSchema = Joi.object({
   SHIPPING_EXPRESS_FEE: Joi.number().integer().min(0).default(50000),
   FREE_SHIPPING_MIN_ORDER: Joi.number().integer().min(0).default(0),
   LOW_STOCK_THRESHOLD: Joi.number().integer().min(0).default(5),
+
+  ONLINE_PAYMENT_PROVIDER: Joi.string().valid('QR_TRANSFER', 'MOMO', 'PAYOS').default('QR_TRANSFER'),
+  PAYOS_CLIENT_ID: Joi.string().trim().max(256).allow('').optional(),
+  PAYOS_API_KEY: Joi.string().trim().max(256).allow('').optional(),
+  PAYOS_CHECKSUM_KEY: Joi.string().trim().max(256).allow('').optional(),
+  PAYOS_PAYMENT_EXPIRES_MINUTES: Joi.number().integer().min(5).max(1440).default(30),
+  MOMO_ENVIRONMENT: Joi.string().valid('sandbox', 'production').default('sandbox'),
+  MOMO_PARTNER_CODE: Joi.string().trim().max(50).allow('').optional(),
+  MOMO_ACCESS_KEY: Joi.string().trim().max(256).allow('').optional(),
+  MOMO_SECRET_KEY: Joi.string().trim().max(256).allow('').optional(),
+  MOMO_IPN_URL: Joi.string().trim().max(2048).allow('').optional(),
 
   // SANDBOX is safe for local testing. VIETQR creates a real bank-transfer
   // QR and requires the public receiving-account details below.
@@ -51,6 +63,19 @@ export const envValidationSchema = Joi.object({
   SEED_STAFF_PASSWORD: Joi.string().min(8).optional(),
   SEED_CUSTOMER_PASSWORD: Joi.string().min(8).optional(),
 }).custom((value, helpers) => {
+  if (value.NODE_ENV === 'production' && value.ONLINE_PAYMENT_PROVIDER === 'PAYOS' && (
+    !value.PAYOS_CLIENT_ID || !value.PAYOS_API_KEY || !value.PAYOS_CHECKSUM_KEY
+  )) {
+    return helpers.message({ custom: 'PAYOS_CLIENT_ID, PAYOS_API_KEY and PAYOS_CHECKSUM_KEY are required for ONLINE_PAYMENT_PROVIDER=PAYOS in production.' });
+  }
+
+  if (value.ONLINE_PAYMENT_PROVIDER === 'MOMO' && (
+    !value.MOMO_PARTNER_CODE || !value.MOMO_ACCESS_KEY || !value.MOMO_SECRET_KEY ||
+    !isPublicMomoIpnUrl(value.MOMO_IPN_URL ?? '')
+  )) {
+    return helpers.message({ custom: 'MOMO_PARTNER_CODE, MOMO_ACCESS_KEY, MOMO_SECRET_KEY and a public HTTPS MOMO_IPN_URL ending in /api/v1/payments/momo/ipn are required for ONLINE_PAYMENT_PROVIDER=MOMO.' });
+  }
+
   if (value.NODE_ENV === 'production' && !value.COOKIE_SECURE) {
     return helpers.error('any.invalid');
   }
@@ -62,6 +87,7 @@ export const envValidationSchema = Joi.object({
   if (value.NODE_ENV === 'production' && value.MAIL_PREVIEW_MODE) {
     return helpers.error('any.invalid');
   }
+
 
   if (
     value.NODE_ENV === 'production' &&

@@ -30,10 +30,13 @@ export const serviceBookingService = {
     return response.data.data;
   },
 
-  async getMine(query: ServiceBookingQuery = {}): Promise<ServiceBookingListResult> {
+  async getMine(
+    query: ServiceBookingQuery = {},
+    signal?: AbortSignal,
+  ): Promise<ServiceBookingListResult> {
     const response = await apiClient.get<ApiResponse<ServiceBooking[]>>(
       '/service-bookings',
-      { params: query },
+      { params: query, signal },
     );
     return toListResult(response.data);
   },

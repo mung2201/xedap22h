@@ -1,17 +1,17 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument, Types } from 'mongoose';
+import { HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
 
 export type ReviewDocument = HydratedDocument<Review>;
 
 @Schema({ collection: 'reviews', timestamps: true, versionKey: false })
 export class Review {
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', required: true, index: true })
   user!: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'Product', required: true, index: true })
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Product', required: true, index: true })
   product!: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'Order', required: true, index: true })
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Order', required: true, index: true })
   order!: Types.ObjectId;
 
   @Prop({ type: String, required: true, trim: true, maxlength: 120 })

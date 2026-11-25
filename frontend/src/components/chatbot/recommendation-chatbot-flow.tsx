@@ -150,6 +150,15 @@ export const RecommendationChatbotFlow = ({
 
           {flow.type === 'RESULT' ? (
             <div className="recommendation-chatbot-results">
+              {!flow.recommendations?.length ? (
+                <Alert
+                  type="info"
+                  showIcon
+                  message="Khám phá thêm lựa chọn"
+                  description="Bạn có thể xem thông số và giá tham khảo của các mẫu khác trong danh mục sản phẩm."
+                  action={<Link to="/products" onClick={onBackToFaq}><Button size="small">Xem sản phẩm</Button></Link>}
+                />
+              ) : null}
               {flow.recommendations?.map((recommendation) => (
                 <RecommendationProductCard
                   key={recommendation.productId}

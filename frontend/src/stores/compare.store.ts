@@ -45,8 +45,12 @@ const readStoredItems = (): CompareProductReference[] => {
 };
 
 const persist = (items: CompareProductReference[]): void => {
-  if (typeof window !== 'undefined') {
-    window.localStorage.setItem(storageKey, JSON.stringify(items));
+  try {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(storageKey, JSON.stringify(items));
+    }
+  } catch {
+    // Keep comparison usable for this visit when browser storage is unavailable.
   }
 };
 
@@ -94,8 +98,12 @@ export const useCompareStore = create<CompareState>((set, get) => ({
   },
 
   clear: () => {
-    if (typeof window !== 'undefined') {
-      window.localStorage.removeItem(storageKey);
+    try {
+      if (typeof window !== 'undefined') {
+        window.localStorage.removeItem(storageKey);
+      }
+    } catch {
+      // Clearing the in-memory list must not depend on persistent storage.
     }
     set({ items: [] });
   },

@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument, Types } from 'mongoose';
+import { HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
 import { ProductQuestionStatus } from '../../common/enums/product-question.enum';
 
 export type ProductQuestionDocument = HydratedDocument<ProductQuestion>;
@@ -25,7 +25,7 @@ export class ProductQuestionAnswer {
   @Prop({ type: String, required: true, trim: true, maxlength: 3000 })
   content!: string;
 
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', required: true })
   answeredBy!: Types.ObjectId;
 
   @Prop({ type: String, required: true, trim: true, maxlength: 120 })
@@ -41,7 +41,7 @@ export const ProductQuestionAnswerSchema = SchemaFactory.createForClass(
 
 @Schema({ collection: 'product_questions', timestamps: true, versionKey: false })
 export class ProductQuestion {
-  @Prop({ type: Types.ObjectId, ref: 'Product', required: true, index: true })
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Product', required: true, index: true })
   product!: Types.ObjectId;
 
   @Prop({
@@ -50,7 +50,7 @@ export class ProductQuestion {
   })
   productSnapshot!: ProductQuestionProductSnapshot;
 
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', required: true, index: true })
   user!: Types.ObjectId;
 
   @Prop({ type: String, required: true, trim: true, maxlength: 120 })

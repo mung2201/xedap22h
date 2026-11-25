@@ -1,7 +1,7 @@
 import { LockOutlined, UserOutlined } from '@ant-design/icons';
 import { Button, Form, Input, Modal, Typography, message } from 'antd';
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../../stores/auth.store';
 import type { LoginPayload } from '../../types/auth';
 import { getErrorMessage } from '../../utils/error-message';
@@ -10,19 +10,29 @@ interface CustomerLoginModalProps {
   open: boolean;
   onClose: () => void;
   onLoginSuccess?: () => void;
+  redirectTo?: string;
 }
 
 export const CustomerLoginModal = ({
   open,
   onClose,
   onLoginSuccess,
+  redirectTo,
 }: CustomerLoginModalProps) => {
+  const location = useLocation();
   const login = useAuthStore((state) => state.login);
+  const submitting = useRef(false);
+  const mounted = useRef(true);
   const [form] = Form.useForm<LoginPayload>();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
   const closeModal = (): void => {
-    if (isSubmitting) {
+    if (submitting.current) {
       return;
     }
 
@@ -31,18 +41,22 @@ export const CustomerLoginModal = ({
   };
 
   const handleSubmit = async (values: LoginPayload): Promise<void> => {
+    if (submitting.current) return;
+    submitting.current = true;
     setIsSubmitting(true);
 
     try {
       await login(values);
+      if (!mounted.current) return;
       form.resetFields();
       onLoginSuccess?.();
       onClose();
       message.success('Đăng nhập thành công. Chào mừng bạn trở lại XeDap22h!');
     } catch (error) {
-      message.error(getErrorMessage(error));
+      if (mounted.current) message.error(getErrorMessage(error));
     } finally {
-      setIsSubmitting(false);
+      submitting.current = false;
+      if (mounted.current) setIsSubmitting(false);
     }
   };
 
@@ -53,6 +67,8 @@ export const CustomerLoginModal = ({
       centered
       destroyOnHidden
       maskClosable={!isSubmitting}
+      closable={!isSubmitting}
+      keyboard={!isSubmitting}
       className="customer-login-modal"
       onCancel={closeModal}
       afterOpenChange={(isOpen) => {
@@ -68,7 +84,7 @@ export const CustomerLoginModal = ({
           Đăng nhập để theo dõi đơn hàng, lưu sản phẩm yêu thích và thanh toán nhanh hơn.
         </Typography.Paragraph>
 
-        <Form<LoginPayload> form={form} layout="vertical" onFinish={handleSubmit} requiredMark={false}>
+        <Form<LoginPayload> form={form} layout="vertical" onFinish={handleSubmit} requiredMark={false} disabled={isSubmitting}>
           <Form.Item
             name="emailOrUsername"
             label="Email hoặc username"
@@ -94,7 +110,10 @@ export const CustomerLoginModal = ({
           </Form.Item>
 
           <div className="customer-login-forgot-link">
-            <Link to="/forgot-password" onClick={onClose}>
+            <Link to="/forgot-password" aria-disabled={isSubmitting} onClick={(event) => {
+              if (submitting.current) event.preventDefault();
+              else closeModal();
+            }}>
               Quên mật khẩu?
             </Link>
           </div>
@@ -106,7 +125,15 @@ export const CustomerLoginModal = ({
 
         <Typography.Paragraph className="customer-login-register-link">
           Chưa có tài khoản?{' '}
-          <Link to="/register" onClick={onClose}>
+          <Link
+            to="/register"
+            state={{ from: redirectTo ?? location.pathname + location.search + location.hash }}
+            aria-disabled={isSubmitting}
+            onClick={(event) => {
+              if (submitting.current) event.preventDefault();
+              else closeModal();
+            }}
+          >
             Đăng ký ngay
           </Link>
         </Typography.Paragraph>

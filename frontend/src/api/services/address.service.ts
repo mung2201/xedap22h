@@ -3,8 +3,8 @@ import type { ApiResponse } from '../../types/api';
 import type { Address, AddressPayload } from '../../types/address';
 
 export const addressService = {
-  async getAll(): Promise<Address[]> {
-    const response = await apiClient.get<ApiResponse<Address[]>>('/addresses');
+  async getAll(signal?: AbortSignal): Promise<Address[]> {
+    const response = await apiClient.get<ApiResponse<Address[]>>('/addresses', { signal });
     return response.data.data;
   },
 

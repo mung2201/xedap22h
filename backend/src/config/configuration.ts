@@ -58,6 +58,20 @@ export default () => ({
     freeShippingMinOrder: Number(process.env.FREE_SHIPPING_MIN_ORDER ?? 0),
   },
   payment: {
+    onlineProvider: process.env.ONLINE_PAYMENT_PROVIDER ?? 'QR_TRANSFER',
+    payos: {
+      clientId: process.env.PAYOS_CLIENT_ID ?? '',
+      apiKey: process.env.PAYOS_API_KEY ?? '',
+      checksumKey: process.env.PAYOS_CHECKSUM_KEY ?? '',
+      expiryMinutes: Number(process.env.PAYOS_PAYMENT_EXPIRES_MINUTES ?? 30),
+    },
+    momo: {
+      environment: process.env.MOMO_ENVIRONMENT ?? 'sandbox',
+      partnerCode: process.env.MOMO_PARTNER_CODE ?? '',
+      accessKey: process.env.MOMO_ACCESS_KEY ?? '',
+      secretKey: process.env.MOMO_SECRET_KEY ?? '',
+      ipnUrl: process.env.MOMO_IPN_URL ?? '',
+    },
     qr: {
       mode: process.env.PAYMENT_QR_MODE ?? 'SANDBOX',
       bankBin: process.env.PAYMENT_QR_BANK_BIN ?? '',

@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument, Types } from 'mongoose';
+import { HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
 import {
   ServiceBookingStatus,
   ServiceBookingType,
@@ -31,7 +31,7 @@ export class ServiceBookingStatusHistoryEntry {
   @Prop({ type: String, trim: true, maxlength: 500 })
   note?: string;
 
-  @Prop({ type: Types.ObjectId, ref: 'User' })
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User' })
   changedBy?: Types.ObjectId;
 
   @Prop({ type: Date, required: true, default: Date.now })
@@ -47,7 +47,7 @@ export class ServiceBooking {
   @Prop({ type: String, required: true, trim: true, uppercase: true, maxlength: 48 })
   bookingCode!: string;
 
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', required: true, index: true })
   user!: Types.ObjectId;
 
   @Prop({ type: ServiceBookingContactSchema, required: true })

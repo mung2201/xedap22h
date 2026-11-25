@@ -18,8 +18,8 @@ import {
   Typography,
   message,
 } from 'antd';
-import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { cartService } from '../../api/services/cart.service';
 import { useCommerceStore } from '../../stores/commerce.store';
 import type { Cart, CartItem } from '../../types/commerce';
@@ -34,33 +34,46 @@ const emptyCart: Cart = {
 };
 
 export const CartPage = () => {
+  const navigate = useNavigate();
   const [cart, setCart] = useState<Cart>(emptyCart);
   const [isLoading, setIsLoading] = useState(true);
   const [isClearing, setIsClearing] = useState(false);
   const [busyItemId, setBusyItemId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const setCartCount = useCommerceStore((state) => state.setCart);
+  const mutationLocked = useRef(false);
+  const loadSequence = useRef(0);
+  const mounted = useRef(false);
+  const isUpdating = isClearing || busyItemId !== null;
 
   const loadCart = useCallback(async (): Promise<void> => {
+    const sequence = ++loadSequence.current;
     setIsLoading(true);
     setErrorMessage(null);
 
     try {
       const nextCart = await cartService.getMine();
+      if (sequence !== loadSequence.current) return;
       setCart(nextCart);
       setCartCount(nextCart);
     } catch (error) {
-      setErrorMessage(getErrorMessage(error));
+      if (sequence === loadSequence.current) setErrorMessage(getErrorMessage(error));
     } finally {
-      setIsLoading(false);
+      if (sequence === loadSequence.current) setIsLoading(false);
     }
   }, [setCartCount]);
 
   useEffect(() => {
+    mounted.current = true;
     void loadCart();
+    return () => {
+      mounted.current = false;
+      loadSequence.current += 1;
+    };
   }, [loadCart]);
 
   const applyCart = (nextCart: Cart): void => {
+    if (!mounted.current) return;
     setCart(nextCart);
     setCartCount(nextCart);
   };
@@ -69,44 +82,59 @@ export const CartPage = () => {
     item: CartItem,
     value: number | null,
   ): Promise<void> => {
-    if (!value || value === item.quantity || !item.isAvailable) {
+    if (
+      mutationLocked.current ||
+      value === null ||
+      !Number.isInteger(value) ||
+      value < 1 ||
+      value > Math.min(99, item.stock) ||
+      value === item.quantity
+    ) {
       return;
     }
 
+    mutationLocked.current = true;
     setBusyItemId(item.id);
 
     try {
       applyCart(await cartService.updateItem(item.id, { quantity: value }));
     } catch (error) {
-      message.error(getErrorMessage(error));
+      if (mounted.current) message.error(getErrorMessage(error));
     } finally {
-      setBusyItemId(null);
+      mutationLocked.current = false;
+      if (mounted.current) setBusyItemId(null);
     }
   };
 
   const removeItem = async (itemId: string): Promise<void> => {
+    if (mutationLocked.current) return;
+    mutationLocked.current = true;
     setBusyItemId(itemId);
 
     try {
       applyCart(await cartService.removeItem(itemId));
-      message.success('Đã xoá sản phẩm khỏi giỏ hàng.');
+      if (mounted.current) message.success('Đã xoá sản phẩm khỏi giỏ hàng.');
     } catch (error) {
-      message.error(getErrorMessage(error));
+      if (mounted.current) message.error(getErrorMessage(error));
     } finally {
-      setBusyItemId(null);
+      mutationLocked.current = false;
+      if (mounted.current) setBusyItemId(null);
     }
   };
 
   const clearCart = async (): Promise<void> => {
+    if (mutationLocked.current) return;
+    mutationLocked.current = true;
     setIsClearing(true);
 
     try {
       applyCart(await cartService.clear());
-      message.success('Đã xoá toàn bộ giỏ hàng.');
+      if (mounted.current) message.success('Đã xoá toàn bộ giỏ hàng.');
     } catch (error) {
-      message.error(getErrorMessage(error));
+      if (mounted.current) message.error(getErrorMessage(error));
     } finally {
-      setIsClearing(false);
+      mutationLocked.current = false;
+      if (mounted.current) setIsClearing(false);
     }
   };
 
@@ -119,9 +147,16 @@ export const CartPage = () => {
   }
 
   if (!cart.items.length) {
+    if (errorMessage) {
+      return (
+        <main className="page-container cart-page">
+          <Alert type="error" showIcon message="Chưa tải được giỏ hàng" description={errorMessage}
+            action={<Button onClick={() => void loadCart()}>Thử lại</Button>} />
+        </main>
+      );
+    }
     return (
       <main className="page-container cart-page">
-        {errorMessage ? <Alert type="error" showIcon message={errorMessage} /> : null}
         <Empty description="Giỏ hàng của bạn đang trống">
           <Link to="/products">
             <Button type="primary" icon={<ShoppingOutlined />}>
@@ -144,11 +179,12 @@ export const CartPage = () => {
         </div>
         <Popconfirm
           title="Xoá toàn bộ giỏ hàng?"
+          disabled={isUpdating}
           okText="Xoá tất cả"
           cancelText="Giữ lại"
           onConfirm={() => void clearCart()}
         >
-          <Button danger loading={isClearing} icon={<DeleteOutlined />}>
+          <Button danger loading={isClearing} disabled={isUpdating} icon={<DeleteOutlined />}>
             Xoá tất cả
           </Button>
         </Popconfirm>
@@ -176,6 +212,7 @@ export const CartPage = () => {
                 actions={[
                   <Popconfirm
                     key="remove"
+                    disabled={isUpdating}
                     title="Xoá sản phẩm này khỏi giỏ hàng?"
                     okText="Xoá"
                     cancelText="Huỷ"
@@ -185,6 +222,7 @@ export const CartPage = () => {
                       danger
                       type="text"
                       loading={busyItemId === item.id}
+                      disabled={isUpdating}
                       icon={<DeleteOutlined />}
                     >
                       Xoá
@@ -203,7 +241,11 @@ export const CartPage = () => {
                         {item.color} · {item.size} · SKU {item.sku}
                       </Typography.Text>
                       {!item.isAvailable ? (
-                        <Tag color="red">Biến thể không còn đủ tồn kho</Tag>
+                        <Tag color={item.stock > 0 ? 'orange' : 'red'} style={{ whiteSpace: 'normal' }}>
+                          {item.stock > 0
+                            ? `Chỉ còn ${item.stock} sản phẩm. Hãy giảm số lượng.`
+                            : 'Sản phẩm đã hết hàng hoặc ngừng bán. Hãy xoá khỏi giỏ.'}
+                        </Tag>
                       ) : (
                         <Typography.Text type="secondary">
                           Còn {item.stock} sản phẩm
@@ -216,9 +258,10 @@ export const CartPage = () => {
                 <div className="cart-item-controls">
                   <InputNumber
                     min={1}
-                    max={Math.max(1, item.stock)}
+                    max={Math.min(99, Math.max(1, item.stock))}
+                    precision={0}
                     value={item.quantity}
-                    disabled={!item.isAvailable || busyItemId === item.id}
+                    disabled={item.stock <= 0 || isUpdating}
                     onChange={(value) => void updateQuantity(item, value)}
                     aria-label={`Số lượng ${item.productName}`}
                   />
@@ -246,16 +289,15 @@ export const CartPage = () => {
             <Typography.Text type="secondary">
               Phí vận chuyển và voucher sẽ được tính lại ở bước thanh toán.
             </Typography.Text>
-            <Link to="/checkout">
               <Button
                 type="primary"
                 size="large"
-                disabled={cart.hasUnavailableItems}
+                disabled={cart.hasUnavailableItems || isUpdating}
+                onClick={() => { if (!mutationLocked.current) navigate('/checkout'); }}
                 block
               >
                 Tiến hành thanh toán
               </Button>
-            </Link>
             <Link to="/products" className="cart-continue-link">
               Tiếp tục mua sắm
             </Link>

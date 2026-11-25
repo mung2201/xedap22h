@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
@@ -38,6 +38,15 @@ export class AdminOrdersController {
     @Param('id', ParseMongoIdPipe) orderId: string,
   ): Promise<OrderResponse> {
     return this.ordersService.findAdminById(orderId);
+  }
+
+  @Post(':id/payment/sync')
+  @ApiOperation({ summary: 'Reconcile an order payment against the authenticated payOS API' })
+  @ResponseMessage('Payment status checked successfully.')
+  syncPayment(
+    @Param('id', ParseMongoIdPipe) orderId: string,
+  ): Promise<OrderResponse> {
+    return this.ordersService.syncPaymentByAdmin(orderId);
   }
 
   @Patch(':id/status')

@@ -78,8 +78,8 @@ export interface ChangePasswordPayload {
 
 export interface UpdateProfilePayload {
   fullName?: string;
-  phone?: string;
-  dateOfBirth?: string;
-  gender?: Gender;
-  avatarUrl?: string;
+  phone?: string | null;
+  dateOfBirth?: string | null;
+  gender?: Gender | null;
+  avatarUrl?: string | null;
 }

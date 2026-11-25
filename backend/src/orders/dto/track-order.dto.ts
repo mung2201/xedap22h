@@ -13,7 +13,9 @@ export class TrackOrderDto {
 
   @ApiProperty({ example: '0901234567' })
   @Transform(({ value }: { value: unknown }): unknown =>
-    typeof value === 'string' ? value.replace(/\D/g, '') : value,
+    typeof value === 'string'
+      ? value.replace(/[\s().-]/g, '').replace(/^\+/, '')
+      : value,
   )
   @IsString()
   @Matches(/^\d{8,15}$/)

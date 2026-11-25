@@ -1,5 +1,5 @@
 import { DeleteOutlined, SwapOutlined } from '@ant-design/icons';
-import { Alert, Button, Card, Empty, Image, Space, Spin, Table, Typography } from 'antd';
+import { Alert, Button, Card, Empty, Grid, Image, Space, Spin, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
@@ -23,6 +23,9 @@ const getSpecificationLabel = (specification: ProductSpecification): string =>
   specification.group ? `${specification.group} · ${specification.label}` : specification.label;
 
 export const CompareProductsPage = () => {
+  const screens = Grid.useBreakpoint();
+  const criteriaWidth = screens.sm ? 190 : 120;
+  const productWidth = screens.sm ? 270 : 240;
   const items = useCompareStore((state) => state.items);
   const remove = useCompareStore((state) => state.remove);
   const clear = useCompareStore((state) => state.clear);
@@ -65,7 +68,10 @@ export const CompareProductsPage = () => {
       {
         key: 'price',
         label: 'Giá bán',
-        ...Object.fromEntries(products.map((product) => [product.id, formatCurrency(product.salePrice)])),
+        ...Object.fromEntries(products.map((product) => [
+          product.id,
+          `${formatCurrency(product.salePrice)}${product.catalogOnly ? ' (tham khảo)' : ''}`,
+        ])),
       },
       {
         key: 'rating',
@@ -85,7 +91,9 @@ export const CompareProductsPage = () => {
         ...Object.fromEntries(
           products.map((product) => [
             product.id,
-            product.availableStock > 0 ? `Còn ${product.availableStock} xe` : 'Tạm hết hàng',
+            product.catalogOnly
+              ? 'Liên hệ tư vấn · Chưa xác nhận tồn kho'
+              : product.availableStock > 0 ? `Còn ${product.availableStock} xe` : 'Tạm hết hàng',
           ]),
         ),
       },
@@ -116,11 +124,11 @@ export const CompareProductsPage = () => {
       },
       {
         key: 'sizes',
-        label: 'Kích cỡ có sẵn',
+        label: 'Kích cỡ',
         ...Object.fromEntries(
           products.map((product) => [
             product.id,
-            Array.from(new Set(product.variants.map((variant) => variant.size))).join(', ') || '—',
+            Array.from(new Set(product.variants.map((variant) => variant.size).filter(Boolean))).join(', ') || '—',
           ]),
         ),
       },
@@ -130,7 +138,7 @@ export const CompareProductsPage = () => {
         ...Object.fromEntries(
           products.map((product) => [
             product.id,
-            Array.from(new Set(product.variants.map((variant) => variant.color))).join(', ') || '—',
+            Array.from(new Set(product.variants.map((variant) => variant.color).filter(Boolean))).join(', ') || '—',
           ]),
         ),
       },
@@ -170,7 +178,7 @@ export const CompareProductsPage = () => {
         title: 'Tiêu chí',
         dataIndex: 'label',
         key: 'label',
-        width: 190,
+        width: criteriaWidth,
         fixed: 'left',
         render: (label: string) => <Typography.Text strong>{label}</Typography.Text>,
       },
@@ -192,11 +200,11 @@ export const CompareProductsPage = () => {
         ),
         dataIndex: product.id,
         key: product.id,
-        width: 270,
+        width: productWidth,
         render: (value: ReactNode) => <span className="compare-cell-value">{value}</span>,
       })),
     ],
-    [products, remove],
+    [products, remove, criteriaWidth, productWidth],
   );
 
   return (
@@ -225,13 +233,16 @@ export const CompareProductsPage = () => {
             </Space>
           }
         >
+          <Typography.Paragraph className="compare-products-scroll-hint" type="secondary">
+            Vuốt ngang bảng để xem các xe còn lại.
+          </Typography.Paragraph>
           <Table<CompareRow>
             className="compare-products-table"
             rowKey="key"
             columns={columns}
             dataSource={rows}
             pagination={false}
-            scroll={{ x: 760 }}
+            scroll={{ x: criteriaWidth + products.length * productWidth }}
           />
         </Card>
       ) : (

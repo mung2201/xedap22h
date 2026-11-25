@@ -11,7 +11,15 @@ export const CategoryCard = ({ category }: CategoryCardProps) => (
   <Link to={`/products?category=${category.slug}`} className="category-card">
     <div className="category-card-media">
       {category.imageUrl ? (
-        <img src={category.imageUrl} alt={category.name} className="category-card-image" />
+        <img
+          src={category.imageUrl}
+          alt=""
+          className="category-card-image"
+          loading="lazy"
+          decoding="async"
+          width={320}
+          height={220}
+        />
       ) : (
         <div className="category-card-placeholder" aria-hidden="true">
           <AppstoreOutlined />
@@ -21,7 +29,7 @@ export const CategoryCard = ({ category }: CategoryCardProps) => (
     <div className="category-card-content">
       <div>
         <Typography.Text strong>{category.name}</Typography.Text>
-        <Typography.Text type="secondary">Khám phá sản phẩm</Typography.Text>
+        <Typography.Text type="secondary">Khám phá ngay</Typography.Text>
       </div>
       <ArrowRightOutlined />
     </div>

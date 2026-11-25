@@ -1,24 +1,27 @@
 import { Button, Card, Form, Input, Typography, message } from 'antd';
-import { Link, useNavigate } from 'react-router-dom';
-import { useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { useRef, useState } from 'react';
 import { useAuthStore } from '../../stores/auth.store';
 import type { RegisterPayload } from '../../types/auth';
 import { getErrorMessage } from '../../utils/error-message';
 
 export const RegisterPage = () => {
   const register = useAuthStore((state) => state.register);
-  const navigate = useNavigate();
+  const location = useLocation();
+  const submitting = useRef(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async (values: RegisterPayload): Promise<void> => {
+    if (submitting.current) return;
+    submitting.current = true;
     setIsSubmitting(true);
     try {
       await register(values);
       message.success('Đăng ký thành công. Chào mừng bạn đến với XeDap22h!');
-      navigate('/');
     } catch (error) {
       message.error(getErrorMessage(error));
     } finally {
+      submitting.current = false;
       setIsSubmitting(false);
     }
   };
@@ -28,9 +31,9 @@ export const RegisterPage = () => {
       <Card className="auth-card">
         <Typography.Title level={2}>Tạo tài khoản</Typography.Title>
         <Typography.Paragraph type="secondary">
-          Tài khoản đăng ký mới luôn có role CUSTOMER.
+          Tạo tài khoản để lưu xe yêu thích, mua sắm và theo dõi đơn hàng.
         </Typography.Paragraph>
-        <Form<RegisterPayload> layout="vertical" onFinish={handleSubmit}>
+        <Form<RegisterPayload> layout="vertical" onFinish={handleSubmit} disabled={isSubmitting}>
           <Form.Item
             label="Họ và tên"
             name="fullName"
@@ -90,7 +93,7 @@ export const RegisterPage = () => {
           </Button>
         </Form>
         <Typography.Paragraph className="auth-footer-text">
-          Đã có tài khoản? <Link to="/login">Đăng nhập</Link>
+          Đã có tài khoản? <Link to="/login" state={location.state} aria-disabled={isSubmitting} onClick={(event) => { if (submitting.current) event.preventDefault(); }}>Đăng nhập</Link>
         </Typography.Paragraph>
       </Card>
     </main>

@@ -1,54 +1,74 @@
+import { lazy, Suspense } from 'react';
+import type { ComponentType } from 'react';
+import { Spin } from 'antd';
 import { Navigate, createBrowserRouter } from 'react-router-dom';
-import { AccountLayout } from '../layouts/account-layout';
-import { AdminLayout } from '../layouts/admin-layout';
+import type { RouteObject } from 'react-router-dom';
+import { PageBackLayout } from '../components/common/page-back-navigation';
 import { CustomerLayout } from '../layouts/customer-layout';
-import { ProfilePage } from '../pages/account/profile-page';
-import { ChangePasswordPage } from '../pages/account/change-password-page';
-import { AddressBookPage } from '../pages/account/address-book-page';
-import { WishlistPage } from '../pages/account/wishlist-page';
-import { OrderDetailPage } from '../pages/account/order-detail-page';
-import { OrdersPage } from '../pages/account/orders-page';
-import { ProductQuestionsPage } from '../pages/account/product-questions-page';
-import { AdminDashboardPage } from '../pages/admin/admin-dashboard-page';
-import { AdminBrandsPage } from '../pages/admin/admin-brands-page';
-import { AdminCategoriesPage } from '../pages/admin/admin-categories-page';
-import { AdminBannersPage } from '../pages/admin/admin-banners-page';
-import { AdminOrderDetailPage } from '../pages/admin/admin-order-detail-page';
-import { AdminOrdersPage } from '../pages/admin/admin-orders-page';
-import { AdminProductFormPage } from '../pages/admin/admin-product-form-page';
-import { AdminProductsPage } from '../pages/admin/admin-products-page';
-import { AdminPagesPage } from '../pages/admin/admin-pages-page';
-import { AdminUsersPage } from '../pages/admin/admin-users-page';
-import { AdminVouchersPage } from '../pages/admin/admin-vouchers-page';
-import { ForgotPasswordPage } from '../pages/auth/forgot-password-page';
-import { LoginPage } from '../pages/auth/login-page';
-import { RegisterPage } from '../pages/auth/register-page';
-import { ResetPasswordPage } from '../pages/auth/reset-password-page';
-import { HomePage } from '../pages/home-page';
-import { CartPage } from '../pages/cart/cart-page';
-import { CheckoutPage } from '../pages/checkout/checkout-page';
-import { MockPaymentPage } from '../pages/orders/mock-payment-page';
-import { NotFoundPage } from '../pages/not-found-page';
-import { OrderSuccessPage } from '../pages/orders/order-success-page';
-import { OrderTrackingPage } from '../pages/order-tracking-page';
-import { ProductDetailPage } from '../pages/products/product-detail-page';
-import { ProductsPage } from '../pages/products/products-page';
-import { CompareProductsPage } from '../pages/products/compare-products-page';
-import { StaticPagePage } from '../pages/static-page-page';
-import { SizeGuidePage } from '../pages/size-guide-page';
-import { ServiceBookingPage } from '../pages/service-booking-page';
-import { AdminSizeGuidesPage } from '../pages/admin/admin-size-guides-page';
-import { AdminFaqsPage } from '../pages/admin/admin-faqs-page';
-import { AdminServiceBookingsPage } from '../pages/admin/admin-service-bookings-page';
-import { AdminProductQuestionsPage } from '../pages/admin/admin-product-questions-page';
 import { GuestRoute } from '../routes/guest-route';
 import { ProtectedRoute } from '../routes/protected-route';
 import { RoleRoute } from '../routes/role-route';
 import { Permission, UserRole } from '../types/auth';
 import { PermissionRoute } from '../routes/permission-route';
 import { AdminIndexRedirect } from '../routes/admin-index-redirect';
+import { RouteErrorPage } from '../pages/route-error-page';
 
-export const router = createBrowserRouter([
+// Keep the surrounding layout and access guards mounted while a page loads.
+const lazyPage = (load: () => Promise<{ default: ComponentType }>) => {
+  const Page = lazy(load);
+  return function LazyRoutePage() {
+    return (
+      <Suspense fallback={<div className="route-page-loading" role="status" aria-live="polite"><Spin /><span>Đang tải trang…</span></div>}>
+        <Page />
+      </Suspense>
+    );
+  };
+};
+
+const AccountLayout = lazyPage(() => import('../layouts/account-layout').then((module) => ({ default: module.AccountLayout })));
+const AdminLayout = lazyPage(() => import('../layouts/admin-layout').then((module) => ({ default: module.AdminLayout })));
+const LoginPage = lazyPage(() => import('../pages/auth/login-page').then((module) => ({ default: module.LoginPage })));
+const AdminLoginPage = lazyPage(() => import('../pages/auth/login-page').then((module) => ({ default: () => <module.LoginPage adminOnly /> })));
+const ProfilePage = lazyPage(() => import('../pages/account/profile-page').then((module) => ({ default: module.ProfilePage })));
+const ChangePasswordPage = lazyPage(() => import('../pages/account/change-password-page').then((module) => ({ default: module.ChangePasswordPage })));
+const AddressBookPage = lazyPage(() => import('../pages/account/address-book-page').then((module) => ({ default: module.AddressBookPage })));
+const WishlistPage = lazyPage(() => import('../pages/account/wishlist-page').then((module) => ({ default: module.WishlistPage })));
+const OrderDetailPage = lazyPage(() => import('../pages/account/order-detail-page').then((module) => ({ default: module.OrderDetailPage })));
+const OrdersPage = lazyPage(() => import('../pages/account/orders-page').then((module) => ({ default: module.OrdersPage })));
+const ProductQuestionsPage = lazyPage(() => import('../pages/account/product-questions-page').then((module) => ({ default: module.ProductQuestionsPage })));
+const AdminDashboardPage = lazyPage(() => import('../pages/admin/admin-dashboard-page').then((module) => ({ default: module.AdminDashboardPage })));
+const AdminBrandsPage = lazyPage(() => import('../pages/admin/admin-brands-page').then((module) => ({ default: module.AdminBrandsPage })));
+const AdminCategoriesPage = lazyPage(() => import('../pages/admin/admin-categories-page').then((module) => ({ default: module.AdminCategoriesPage })));
+const AdminBannersPage = lazyPage(() => import('../pages/admin/admin-banners-page').then((module) => ({ default: module.AdminBannersPage })));
+const AdminOrderDetailPage = lazyPage(() => import('../pages/admin/admin-order-detail-page').then((module) => ({ default: module.AdminOrderDetailPage })));
+const AdminOrdersPage = lazyPage(() => import('../pages/admin/admin-orders-page').then((module) => ({ default: module.AdminOrdersPage })));
+const AdminProductFormPage = lazyPage(() => import('../pages/admin/admin-product-form-page').then((module) => ({ default: module.AdminProductFormPage })));
+const AdminProductsPage = lazyPage(() => import('../pages/admin/admin-products-page').then((module) => ({ default: module.AdminProductsPage })));
+const AdminPagesPage = lazyPage(() => import('../pages/admin/admin-pages-page').then((module) => ({ default: module.AdminPagesPage })));
+const AdminUsersPage = lazyPage(() => import('../pages/admin/admin-users-page').then((module) => ({ default: module.AdminUsersPage })));
+const AdminVouchersPage = lazyPage(() => import('../pages/admin/admin-vouchers-page').then((module) => ({ default: module.AdminVouchersPage })));
+const ForgotPasswordPage = lazyPage(() => import('../pages/auth/forgot-password-page').then((module) => ({ default: module.ForgotPasswordPage })));
+const RegisterPage = lazyPage(() => import('../pages/auth/register-page').then((module) => ({ default: module.RegisterPage })));
+const ResetPasswordPage = lazyPage(() => import('../pages/auth/reset-password-page').then((module) => ({ default: module.ResetPasswordPage })));
+const HomePage = lazyPage(() => import('../pages/home-page').then((module) => ({ default: module.HomePage })));
+const CartPage = lazyPage(() => import('../pages/cart/cart-page').then((module) => ({ default: module.CartPage })));
+const CheckoutPage = lazyPage(() => import('../pages/checkout/checkout-page').then((module) => ({ default: module.CheckoutPage })));
+const MockPaymentPage = lazyPage(() => import('../pages/orders/mock-payment-page').then((module) => ({ default: module.MockPaymentPage })));
+const NotFoundPage = lazyPage(() => import('../pages/not-found-page').then((module) => ({ default: module.NotFoundPage })));
+const OrderSuccessPage = lazyPage(() => import('../pages/orders/order-success-page').then((module) => ({ default: module.OrderSuccessPage })));
+const OrderTrackingPage = lazyPage(() => import('../pages/order-tracking-page').then((module) => ({ default: module.OrderTrackingPage })));
+const ProductDetailPage = lazyPage(() => import('../pages/products/product-detail-page').then((module) => ({ default: module.ProductDetailPage })));
+const ProductsPage = lazyPage(() => import('../pages/products/products-page').then((module) => ({ default: module.ProductsPage })));
+const CompareProductsPage = lazyPage(() => import('../pages/products/compare-products-page').then((module) => ({ default: module.CompareProductsPage })));
+const StaticPagePage = lazyPage(() => import('../pages/static-page-page').then((module) => ({ default: module.StaticPagePage })));
+const SizeGuidePage = lazyPage(() => import('../pages/size-guide-page').then((module) => ({ default: module.SizeGuidePage })));
+const ServiceBookingPage = lazyPage(() => import('../pages/service-booking-page').then((module) => ({ default: module.ServiceBookingPage })));
+const AdminSizeGuidesPage = lazyPage(() => import('../pages/admin/admin-size-guides-page').then((module) => ({ default: module.AdminSizeGuidesPage })));
+const AdminFaqsPage = lazyPage(() => import('../pages/admin/admin-faqs-page').then((module) => ({ default: module.AdminFaqsPage })));
+const AdminServiceBookingsPage = lazyPage(() => import('../pages/admin/admin-service-bookings-page').then((module) => ({ default: module.AdminServiceBookingsPage })));
+const AdminProductQuestionsPage = lazyPage(() => import('../pages/admin/admin-product-questions-page').then((module) => ({ default: module.AdminProductQuestionsPage })));
+
+const routes: RouteObject[] = [
   {
     path: '/',
     element: <CustomerLayout />,
@@ -177,7 +197,7 @@ export const router = createBrowserRouter([
     path: '/admin/login',
     element: (
       <GuestRoute>
-        <LoginPage adminOnly />
+        <AdminLoginPage />
       </GuestRoute>
     ),
   },
@@ -323,4 +343,14 @@ export const router = createBrowserRouter([
     ],
   },
   { path: '*', element: <NotFoundPage /> },
-]);
+];
+
+export const router = createBrowserRouter(routes.map((route) => {
+  // These layouts own their Back button; all independent pages share a wrapper.
+  const hasLayout = route.path && ['/', '/account', '/admin'].includes(route.path);
+  return {
+    ...route,
+    element: hasLayout ? route.element : <PageBackLayout>{route.element}</PageBackLayout>,
+    errorElement: <RouteErrorPage />,
+  };
+}));

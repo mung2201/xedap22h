@@ -2,6 +2,7 @@ import {
   ArrowLeftOutlined,
   EnvironmentOutlined,
   FileTextOutlined,
+  ReloadOutlined,
   ShoppingCartOutlined,
 } from '@ant-design/icons';
 import {
@@ -23,16 +24,21 @@ import {
   Typography,
   message,
 } from 'antd';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { orderService } from '../../api/services/order.service';
 import {
   OrderStatus,
+  PaymentMethod,
+  PaymentStatus,
+  getOrderPaymentLabel,
   orderStatusLabels,
   paymentStatusLabels,
+  shippingMethodLabels,
 } from '../../types/order';
 import type { Order } from '../../types/order';
 import { formatCurrency } from '../../utils/currency';
+import { formatDeliveryAddress } from '../../utils/address';
 import { getErrorMessage } from '../../utils/error-message';
 
 const statusColor: Record<OrderStatus, string> = {
@@ -58,41 +64,86 @@ export const OrderDetailPage = () => {
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
   const [cancellationReason, setCancellationReason] = useState('');
   const [isCancelling, setIsCancelling] = useState(false);
+  const [isCheckingPayment, setIsCheckingPayment] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const loadController = useRef<AbortController | null>(null);
+  const cancellationPending = useRef(false);
+  const paymentCheckPending = useRef(false);
 
   useEffect(() => {
+    const controller = new AbortController();
+    loadController.current = controller;
+    cancellationPending.current = false;
+    paymentCheckPending.current = false;
+    setIsCancelModalOpen(false);
+    setCancellationReason('');
+    setIsCancelling(false);
+    setIsCheckingPayment(false);
     const loadOrder = async (): Promise<void> => {
       setIsLoading(true);
       setErrorMessage(null);
+      setOrder(null);
 
       try {
-        setOrder(await orderService.getById(id));
+        const nextOrder = await orderService.getById(id, controller.signal);
+        if (!controller.signal.aborted) setOrder(nextOrder);
       } catch (error) {
-        setErrorMessage(getErrorMessage(error));
+        if (!controller.signal.aborted) setErrorMessage(getErrorMessage(error));
       } finally {
-        setIsLoading(false);
+        if (!controller.signal.aborted) setIsLoading(false);
       }
     };
 
     void loadOrder();
-  }, [id]);
+    return () => controller.abort();
+  }, [id, reloadKey]);
 
   const cancelOrder = async (): Promise<void> => {
+    if (cancellationPending.current || paymentCheckPending.current) return;
     if (!order || cancellationReason.trim().length < 3) {
       message.warning('Vui lòng nhập lý do huỷ đơn (ít nhất 3 ký tự).');
       return;
     }
 
+    const signal = loadController.current?.signal;
+    cancellationPending.current = true;
     setIsCancelling(true);
 
     try {
-      setOrder(await orderService.cancel(order.id, cancellationReason.trim()));
+      const updatedOrder = await orderService.cancel(order.id, cancellationReason.trim());
+      if (signal?.aborted) return;
+      setOrder(updatedOrder);
       setIsCancelModalOpen(false);
       setCancellationReason('');
       message.success('Đơn hàng đã được huỷ và tồn kho đã được hoàn lại.');
     } catch (error) {
-      message.error(getErrorMessage(error));
+      if (!signal?.aborted) message.error(getErrorMessage(error));
     } finally {
-      setIsCancelling(false);
+      if (!signal?.aborted) {
+        cancellationPending.current = false;
+        setIsCancelling(false);
+      }
+    }
+  };
+
+  const checkPayment = async (): Promise<void> => {
+    if (!order || order.paymentProvider !== 'PAYOS' || !order.paymentReference ||
+      paymentCheckPending.current || cancellationPending.current || isCancelModalOpen) return;
+    const signal = loadController.current?.signal;
+    paymentCheckPending.current = true;
+    setIsCheckingPayment(true);
+    try {
+      const result = await orderService.syncOnlinePayment(order.orderCode, order.paymentReference, signal);
+      if (signal?.aborted) return;
+      setOrder(result.order);
+      message.success(`Trạng thái thanh toán: ${paymentStatusLabels[result.order.paymentStatus]}.`);
+    } catch (error) {
+      if (!signal?.aborted) message.error(getErrorMessage(error));
+    } finally {
+      if (!signal?.aborted) {
+        paymentCheckPending.current = false;
+        setIsCheckingPayment(false);
+      }
     }
   };
 
@@ -100,8 +151,15 @@ export const OrderDetailPage = () => {
     return <Spin size="large" className="account-page-spinner" />;
   }
 
-  if (!order) {
-    return <Alert type="error" showIcon message={errorMessage ?? 'Không tìm thấy đơn hàng.'} />;
+  if (errorMessage || !order) {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        message={errorMessage ?? 'Không tìm thấy đơn hàng.'}
+        action={<Button onClick={() => setReloadKey((value) => value + 1)}>Thử lại</Button>}
+      />
+    );
   }
 
   return (
@@ -120,7 +178,9 @@ export const OrderDetailPage = () => {
           </Space>
         </div>
         {order.orderStatus === OrderStatus.PENDING ? (
-          <Button danger onClick={() => setIsCancelModalOpen(true)}>
+          <Button danger disabled={isCheckingPayment} onClick={() => {
+            if (!paymentCheckPending.current) setIsCancelModalOpen(true);
+          }}>
             Huỷ đơn
           </Button>
         ) : null}
@@ -159,7 +219,7 @@ export const OrderDetailPage = () => {
               <Typography.Text strong>{order.shippingAddress.recipientName}</Typography.Text>
               <Typography.Text>{order.shippingAddress.phone}</Typography.Text>
               <Typography.Text>
-                {order.shippingAddress.addressLine}, {order.shippingAddress.ward}, {order.shippingAddress.district}, {order.shippingAddress.province}
+                {formatDeliveryAddress(order.shippingAddress)}
               </Typography.Text>
               {order.shippingAddress.note ? (
                 <Typography.Text type="secondary">Ghi chú: {order.shippingAddress.note}</Typography.Text>
@@ -170,13 +230,36 @@ export const OrderDetailPage = () => {
         <Col xs={24} lg={12}>
           <Card title={<><FileTextOutlined /> Thanh toán</>}>
             <Descriptions column={1} size="small">
-              <Descriptions.Item label="Phương thức">{order.paymentMethod}</Descriptions.Item>
+              <Descriptions.Item label="Phương thức">{getOrderPaymentLabel(order)}</Descriptions.Item>
               <Descriptions.Item label="Trạng thái">
                 {paymentStatusLabels[order.paymentStatus]}
               </Descriptions.Item>
-              <Descriptions.Item label="Vận chuyển">{order.shippingMethod}</Descriptions.Item>
+              {order.paymentProvider === 'PAYOS' && typeof order.receivedPaymentAmount === 'number' &&
+                Number.isFinite(order.receivedPaymentAmount) ? (
+                  <Descriptions.Item label="Đã nhận qua payOS">{formatCurrency(order.receivedPaymentAmount)}</Descriptions.Item>
+                ) : null}
+              <Descriptions.Item label="Vận chuyển">{shippingMethodLabels[order.shippingMethod]}</Descriptions.Item>
               {order.note ? <Descriptions.Item label="Ghi chú">{order.note}</Descriptions.Item> : null}
             </Descriptions>
+            <Space wrap>
+              {order.paymentMethod === PaymentMethod.ONLINE &&
+                order.paymentStatus === PaymentStatus.UNPAID &&
+                order.orderStatus !== OrderStatus.CANCELLED && order.paymentReference ? (
+                  <Link to={`/payment/qr?${new URLSearchParams({ orderCode: order.orderCode, paymentRef: order.paymentReference }).toString()}`}>
+                    <Button type="primary">Tiếp tục thanh toán</Button>
+                  </Link>
+                ) : null}
+              {order.paymentProvider === 'PAYOS' && order.paymentReference ? (
+                <Button icon={<ReloadOutlined />} loading={isCheckingPayment}
+                  disabled={isCancelling || isCancelModalOpen} onClick={() => void checkPayment()}>
+                  Kiểm tra thanh toán
+                </Button>
+              ) : null}
+            </Space>
+            {order.paymentStatus === PaymentStatus.REFUND_PENDING ? (
+              <Alert type="warning" showIcon message="Cửa hàng đang xử lý hoàn tiền."
+                description="Giao dịch đã được ghi nhận. Trạng thái này chưa xác nhận tiền đã hoàn về tài khoản của bạn." />
+            ) : null}
           </Card>
         </Col>
       </Row>
@@ -225,7 +308,10 @@ export const OrderDetailPage = () => {
         cancelText="Đóng"
         okButtonProps={{ danger: true, loading: isCancelling }}
         onOk={() => void cancelOrder()}
-        onCancel={() => setIsCancelModalOpen(false)}
+        onCancel={() => { if (!cancellationPending.current) setIsCancelModalOpen(false); }}
+        cancelButtonProps={{ disabled: isCancelling }}
+        closable={!isCancelling}
+        maskClosable={!isCancelling}
       >
         <Typography.Paragraph type="secondary">
           Bạn chỉ có thể tự huỷ đơn đang chờ xác nhận. Tồn kho và lượt dùng voucher sẽ được hoàn lại.

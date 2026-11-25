@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
 import { User } from '../../users/schemas/user.schema';
+import { AddressFormat } from '../address-format.enum';
 
 export type AddressDocument = HydratedDocument<Address>;
 
@@ -20,13 +21,16 @@ export class Address {
   @Prop({ type: String, required: true, trim: true, maxlength: 25 })
   phone!: string;
 
+  @Prop({ type: String, enum: AddressFormat })
+  addressFormat?: AddressFormat;
+
   @Prop({ type: String, required: true, trim: true, maxlength: 120 })
   province!: string;
 
-  @Prop({ type: String, required: true, trim: true, maxlength: 120 })
+  @Prop({ type: String, default: '', trim: true, maxlength: 120 })
   district!: string;
 
-  @Prop({ type: String, required: true, trim: true, maxlength: 120 })
+  @Prop({ type: String, default: '', trim: true, maxlength: 120 })
   ward!: string;
 
   @Prop({ type: String, required: true, trim: true, maxlength: 300 })

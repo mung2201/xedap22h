@@ -229,11 +229,21 @@ export class UsersService {
     userId: string,
     dto: UpdateProfileDto,
   ): Promise<PublicUser> {
-    assertNoUnexpectedNull(dto);
+    const clearableFields = ['phone', 'dateOfBirth', 'gender', 'avatarUrl'] as const;
+    assertNoUnexpectedNull(dto, clearableFields);
+    const values = Object.fromEntries(
+      Object.entries(dto).filter(([, value]) => value !== null && value !== undefined),
+    );
+    const removedFields = Object.fromEntries(
+      clearableFields.filter((field) => dto[field] === null).map((field) => [field, 1]),
+    );
     const user = await this.userModel
       .findByIdAndUpdate(
         userId,
-        { $set: dto },
+        {
+          $set: values,
+          ...(Object.keys(removedFields).length ? { $unset: removedFields } : {}),
+        },
         { new: true, runValidators: true },
       )
       .exec();

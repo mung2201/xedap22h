@@ -1,5 +1,6 @@
 import { RightOutlined, ShoppingOutlined } from '@ant-design/icons';
 import {
+  Alert,
   Button,
   Empty,
   List,
@@ -9,7 +10,6 @@ import {
   Spin,
   Tag,
   Typography,
-  message,
 } from 'antd';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -42,22 +42,29 @@ export const OrdersPage = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<OrderStatus>();
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    const controller = new AbortController();
     const loadOrders = async (): Promise<void> => {
       setIsLoading(true);
+      setErrorMessage(null);
+      setResult(null);
 
       try {
-        setResult(await orderService.getMine({ page, limit: 10, status }));
+        const nextResult = await orderService.getMine({ page, limit: 10, status }, controller.signal);
+        if (!controller.signal.aborted) setResult(nextResult);
       } catch (error) {
-        message.error(getErrorMessage(error));
+        if (!controller.signal.aborted) setErrorMessage(getErrorMessage(error));
       } finally {
-        setIsLoading(false);
+        if (!controller.signal.aborted) setIsLoading(false);
       }
     };
 
     void loadOrders();
-  }, [page, status]);
+    return () => controller.abort();
+  }, [page, status, reloadKey]);
 
   const orders = result?.items ?? [];
   const meta = result?.meta;
@@ -89,6 +96,14 @@ export const OrdersPage = () => {
 
       {isLoading ? (
         <Spin size="large" className="account-page-spinner" />
+      ) : errorMessage ? (
+        <Alert
+          type="error"
+          showIcon
+          message="Không thể tải đơn hàng"
+          description={errorMessage}
+          action={<Button onClick={() => setReloadKey((value) => value + 1)}>Thử lại</Button>}
+        />
       ) : orders.length ? (
         <>
           <List
@@ -139,7 +154,7 @@ export const OrdersPage = () => {
           ) : null}
         </>
       ) : (
-        <Empty description="Bạn chưa có đơn hàng">
+        <Empty description={status ? 'Không có đơn hàng ở trạng thái này' : 'Bạn chưa có đơn hàng'}>
           <Link to="/products">
             <Button type="primary" icon={<ShoppingOutlined />}>
               Mua sắm ngay

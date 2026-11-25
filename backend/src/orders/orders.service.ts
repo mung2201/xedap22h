@@ -4,9 +4,10 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { randomBytes } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 import { Connection, Model, Types } from 'mongoose';
 import { Cart } from '../carts/schemas/cart.schema';
 import {
@@ -26,10 +27,12 @@ import {
   CheckoutService,
 } from '../checkout/checkout.service';
 import { MailService } from '../mail/mail.service';
+import { normalizeVietnameseMobile } from '../common/utils/phone.util';
 import { PaymentsService } from '../payments/payments.service';
 import { MOCK_ONLINE_PAYMENT_PROVIDER } from '../payments/providers/mock-online-payment.provider';
 import { QR_TRANSFER_PAYMENT_PROVIDER } from '../payments/providers/qr-transfer-payment.provider';
 import { QrPaymentInstruction } from '../payments/providers/payment-provider.interface';
+import type { PayosPaymentState } from '../payments/providers/payos-payment.types';
 import { Product } from '../products/schemas/product.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { VouchersService } from '../vouchers/vouchers.service';
@@ -93,6 +96,7 @@ export interface OrderResponse {
   shippingMethod: ShippingMethod;
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
+  receivedPaymentAmount?: number;
   paidAt?: Date;
   refundedAt?: Date;
   paymentProvider?: string;
@@ -137,6 +141,13 @@ const ADMIN_ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [OrderStatus.DELIVERED]: [],
   [OrderStatus.CANCELLED]: [],
 };
+
+// Final payment failures for captureWallet. Unknown/non-final codes stay
+// unpaid until a verified final notification arrives; 9000 is authorization.
+const MOMO_FINAL_FAILURES = new Set([
+  98, 99, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1017, 1026,
+  2019, 4001, 4002, 4100,
+]);
 
 @Injectable()
 export class OrdersService {
@@ -189,7 +200,7 @@ export class OrdersService {
                 // immutable order snapshot. Existing clients can omit it and
                 // will safely fall back to the account email.
                 email: dto.customerEmail ?? user.email,
-                phone: user.phone ?? prepared.shippingAddress.phone,
+                phone: dto.customerPhone ?? user.phone ?? prepared.shippingAddress.phone,
               },
               shippingAddress: prepared.shippingAddress,
               items: prepared.items.map((item) => this.toOrderItem(item)),
@@ -216,6 +227,8 @@ export class OrdersService {
                 ? { paidAt: now }
                 : {}),
               paymentProvider: payment.provider,
+              ...(payment.momoRequest ? { momoRequest: payment.momoRequest } : {}),
+              ...(payment.payosRequest ? { payosRequest: payment.payosRequest } : {}),
               ...(payment.paymentReference
                 ? { paymentReference: payment.paymentReference }
                 : {}),
@@ -254,13 +267,21 @@ export class OrdersService {
     }
 
     const response = this.toResponse(createdOrder);
-    void this.sendOrderConfirmation(response).catch((error: unknown) => {
-      this.logger.warn(
-        `Could not send confirmation for ${response.orderCode}: ${
-          error instanceof Error ? error.message : 'unknown mail error'
-        }`,
-      );
-    });
+    // COD is acknowledged once the order commits. An online order is only
+    // acknowledged after verified payment, never merely for creating its QR.
+    if (response.paymentMethod === PaymentMethod.COD ||
+      response.paymentStatus === PaymentStatus.PAID) {
+      const confirmation = response.paymentMethod === PaymentMethod.COD
+        ? this.sendOrderConfirmation(response)
+        : this.sendPaymentConfirmation(response);
+      void confirmation.catch((error: unknown) => {
+        this.logger.warn(
+          `Could not send confirmation for ${response.orderCode}: ${
+            error instanceof Error ? error.message : 'unknown mail error'
+          }`,
+        );
+      });
+    }
 
     return response;
   }
@@ -398,6 +419,21 @@ export class OrdersService {
     return this.toResponse(order);
   }
 
+  async syncPaymentByAdmin(orderId: string): Promise<OrderResponse> {
+    const order = await this.orderModel.findById(orderId).exec();
+    if (!order) {
+      throw new NotFoundException('Order not found.');
+    }
+    if (order.paymentMethod !== PaymentMethod.ONLINE ||
+      order.paymentProvider !== 'PAYOS' || !order.payosRequest) {
+      throw new BadRequestException('Đơn hàng này không dùng payOS.');
+    }
+    // Closed orders still need reconciliation when a bank transfer arrives late.
+    // This never creates a payment link or accepts a client-supplied paid status.
+    if (order.payosStartedAt) await this.syncPayosOrder(order, false);
+    return this.findAdminById(orderId);
+  }
+
   async updateStatusByAdmin(
     actor: AuthenticatedUser,
     orderId: string,
@@ -447,9 +483,9 @@ export class OrdersService {
             await this.vouchersService.release(order.voucher.voucherId.toString(), session);
           }
 
-          if (order.paymentStatus === PaymentStatus.PAID) {
-            order.paymentStatus = PaymentStatus.REFUNDED;
-            order.refundedAt = now;
+          if (order.paymentStatus === PaymentStatus.PAID ||
+            (order.paymentProvider === 'PAYOS' && (order.payosAmountPaid ?? 0) > 0)) {
+            this.recordCancelledPayment(order, now);
           }
           order.cancellationReason = dto.note;
           order.cancelledAt = now;
@@ -480,6 +516,8 @@ export class OrdersService {
       throw new ConflictException('Order status could not be updated. Please try again.');
     }
 
+    // COD already received its placement receipt; delivery still records paid
+    // money without sending an online-payment confirmation a second time.
     return this.toResponse(updatedOrder);
   }
 
@@ -520,9 +558,9 @@ export class OrdersService {
         }
 
         const now = new Date();
-        if (order.paymentStatus === PaymentStatus.PAID) {
-          order.paymentStatus = PaymentStatus.REFUNDED;
-          order.refundedAt = now;
+        if (order.paymentStatus === PaymentStatus.PAID ||
+          (order.paymentProvider === 'PAYOS' && (order.payosAmountPaid ?? 0) > 0)) {
+          this.recordCancelledPayment(order, now);
         }
 
         order.orderStatus = OrderStatus.CANCELLED;
@@ -553,29 +591,46 @@ export class OrdersService {
     orderCode: string,
     paymentReference?: string,
   ): Promise<OnlinePaymentResponse> {
-    const normalizedOrderCode = orderCode.trim().toUpperCase();
-    const order = await this.orderModel
-      .findOne({
-        user: this.toUserObjectId(userId),
-        orderCode: normalizedOrderCode,
-      })
-      .exec();
-
-    if (!order) {
-      throw new NotFoundException('Order not found.');
+    const order = await this.findOwnedOnlineOrder(userId, orderCode, paymentReference);
+    if (order.paymentProvider === 'PAYOS') {
+      return {
+        order: this.toResponse(order),
+        instruction: {
+          mode: 'PAYOS', amount: order.total,
+          paymentReference: order.paymentReference,
+          transferContent: order.payosDescription ?? order.payosRequest?.description ?? order.orderCode,
+          customerCanConfirm: false,
+          paymentStarted: Boolean(order.payosStartedAt),
+          amountPaid: order.payosAmountPaid ?? 0,
+          ...(order.payosRequest ? { expiresAt: new Date(order.payosRequest.expiredAt * 1000).toISOString() } : {}),
+          instructions: 'Quét mã bằng ứng dụng ngân hàng. Giữ đúng số tiền và nội dung chuyển khoản. Hệ thống kiểm tra kết quả trực tiếp với payOS.',
+          ...(order.paymentStatus === PaymentStatus.UNPAID && order.orderStatus !== OrderStatus.CANCELLED
+            ? {
+              gatewayUrl: order.payosGatewayUrl, qrPayload: order.payosQrPayload,
+              accountNumber: order.payosAccountNumber, accountName: order.payosAccountName,
+              bankBin: order.payosBankBin,
+            } : {}),
+        },
+      };
     }
-
-    if (order.paymentMethod !== PaymentMethod.ONLINE || !order.paymentReference) {
-      throw new BadRequestException('This order does not use QR payment.');
+    if (order.paymentProvider === 'MOMO') {
+      return {
+        order: this.toResponse(order),
+        instruction: {
+          mode: 'MOMO',
+          amount: order.total,
+          paymentReference: order.paymentReference!,
+          transferContent: order.orderCode,
+          environment: order.momoRequest?.environment,
+          customerCanConfirm: false,
+          paymentStarted: Boolean(order.momoStartedAt),
+          instructions: 'Quét mã bằng MoMo hoặc mở trang thanh toán MoMo. Đơn chỉ được xác nhận khi hệ thống nhận thông báo thanh toán hợp lệ từ MoMo.',
+          ...(order.paymentStatus === PaymentStatus.UNPAID && order.orderStatus !== OrderStatus.CANCELLED
+            ? { gatewayUrl: order.momoGatewayUrl, qrPayload: order.momoQrPayload }
+            : {}),
+        },
+      };
     }
-
-    if (
-      paymentReference &&
-      order.paymentReference !== paymentReference.trim()
-    ) {
-      throw new BadRequestException('QR payment reference does not match the order.');
-    }
-
     return {
       order: this.toResponse(order),
       instruction: await this.paymentsService.getOnlineQrInstruction({
@@ -583,8 +638,307 @@ export class OrdersService {
         amount: order.total,
         customerId: userId,
         paymentReference: order.paymentReference,
+        provider: order.paymentProvider,
       }),
     };
+  }
+
+  getOnlinePaymentOptions() {
+    return this.paymentsService.getOnlinePaymentOptions();
+  }
+
+  async startOnlinePayment(
+    userId: string,
+    orderCode: string,
+    paymentReference: string,
+  ): Promise<OnlinePaymentResponse> {
+    const order = await this.findOwnedOnlineOrder(userId, orderCode, paymentReference);
+    if (order.paymentProvider === 'PAYOS') {
+      return this.startPayosPayment(order);
+    }
+    if (order.paymentProvider !== 'MOMO' || !order.momoRequest) {
+      throw new BadRequestException('Đơn hàng này không sử dụng MoMo.');
+    }
+    if (order.orderStatus === OrderStatus.CANCELLED || order.paymentStatus !== PaymentStatus.UNPAID) {
+      throw new BadRequestException('Đơn hàng này không còn chờ thanh toán.');
+    }
+    if (order.momoGatewayUrl) {
+      return this.getOnlinePayment(userId, orderCode, paymentReference);
+    }
+    if (order.momoStartedAt && Date.now() - order.momoStartedAt.getTime() > 86_400_000) {
+      throw new BadRequestException('Phiên thanh toán đã cũ. Vui lòng liên hệ cửa hàng để đối soát trước khi thanh toán lại.');
+    }
+
+    const now = new Date();
+    const leaseToken = randomUUID();
+    const claimed = await this.orderModel.findOneAndUpdate(
+      {
+        _id: order._id,
+        paymentStatus: PaymentStatus.UNPAID,
+        orderStatus: { $ne: OrderStatus.CANCELLED },
+        momoGatewayUrl: { $exists: false },
+        $or: [{ momoLeaseUntil: { $exists: false } }, { momoLeaseUntil: { $lte: now } }],
+      },
+      { $set: {
+        momoStartedAt: order.momoStartedAt ?? now,
+        momoLeaseUntil: new Date(now.getTime() + 60_000),
+        momoLeaseToken: leaseToken,
+      } },
+      { new: true },
+    ).exec();
+    if (!claimed?.momoRequest) {
+      throw new ConflictException('Thanh toán đang được xử lý hoặc trạng thái đơn đã thay đổi. Vui lòng cập nhật trạng thái.');
+    }
+
+    try {
+      // Deliberately outside withTransaction: MongoDB may rerun its callback.
+      // Retrying this call reuses the immutable merchant request/transaction ID.
+      const result = await this.paymentsService.createMomoPayment(claimed.momoRequest);
+      await this.orderModel.updateOne(
+        { _id: order._id, momoLeaseToken: leaseToken },
+        { $set: {
+          momoGatewayUrl: result.gatewayUrl,
+          ...(result.qrPayload ? { momoQrPayload: result.qrPayload } : {}),
+        } },
+      ).exec();
+    } finally {
+      await this.orderModel.updateOne(
+        { _id: order._id, momoLeaseToken: leaseToken },
+        { $unset: { momoLeaseUntil: 1, momoLeaseToken: 1 } },
+      ).exec();
+    }
+    return this.getOnlinePayment(userId, orderCode, paymentReference);
+  }
+
+  private async startPayosPayment(order: OrderDocument): Promise<OnlinePaymentResponse> {
+    if (!order.payosRequest || order.orderStatus === OrderStatus.CANCELLED || order.paymentStatus !== PaymentStatus.UNPAID) {
+      throw new BadRequestException('Đơn hàng này không còn chờ thanh toán payOS.');
+    }
+    if (order.payosGatewayUrl) {
+      return this.getOnlinePayment(order.user.toString(), order.orderCode, order.paymentReference);
+    }
+    if (!order.payosStartedAt && order.payosRequest.expiredAt * 1000 <= Date.now()) {
+      throw new BadRequestException('Mã thanh toán đã hết hạn. Vui lòng kiểm tra đơn hàng trước khi đặt lại.');
+    }
+    const now = new Date();
+    const token = randomUUID();
+    const claimed = await this.orderModel.findOneAndUpdate({
+      _id: order._id, paymentStatus: PaymentStatus.UNPAID,
+      orderStatus: { $ne: OrderStatus.CANCELLED }, payosGatewayUrl: { $exists: false },
+      $or: [{ payosLeaseUntil: { $exists: false } }, { payosLeaseUntil: { $lte: now } }],
+    }, { $set: {
+      payosStartedAt: order.payosStartedAt ?? now,
+      payosLeaseUntil: new Date(now.getTime() + 60_000), payosLeaseToken: token,
+    } }, { new: true }).exec();
+    if (!claimed?.payosRequest) {
+      throw new ConflictException('Đang tạo mã thanh toán hoặc trạng thái đơn đã thay đổi. Vui lòng kiểm tra lại.');
+    }
+    try {
+      // Calling the gateway here cannot be repeated by MongoDB transaction retries.
+      const result = await this.paymentsService.createPayosPayment(claimed.payosRequest, Boolean(order.payosStartedAt));
+      await this.orderModel.updateOne({ _id: order._id, payosLeaseToken: token }, { $set: {
+        payosLinkId: result.paymentLinkId, payosGatewayUrl: result.gatewayUrl,
+        payosDescription: result.description,
+        ...(result.qrPayload ? { payosQrPayload: result.qrPayload } : {}),
+        ...(result.accountNumber ? { payosAccountNumber: result.accountNumber } : {}),
+        ...(result.accountName ? { payosAccountName: result.accountName } : {}),
+        ...(result.bankBin ? { payosBankBin: result.bankBin } : {}),
+      } }).exec();
+      // Creating a link is never proof of payment. Status is applied by sync/webhook.
+    } finally {
+      await this.orderModel.updateOne({ _id: order._id, payosLeaseToken: token },
+        { $unset: { payosLeaseUntil: 1, payosLeaseToken: 1 } }).exec();
+    }
+    return this.getOnlinePayment(order.user.toString(), order.orderCode, order.paymentReference);
+  }
+
+  async syncOnlinePayment(userId: string, orderCode: string, paymentReference: string): Promise<OnlinePaymentResponse> {
+    const order = await this.findOwnedOnlineOrder(userId, orderCode, paymentReference);
+    if (order.paymentProvider !== 'PAYOS' || !order.payosRequest) {
+      throw new BadRequestException('Đơn hàng này không dùng payOS.');
+    }
+    if (order.payosStartedAt) await this.syncPayosOrder(order, false);
+    return this.getOnlinePayment(userId, orderCode, paymentReference);
+  }
+
+  async handlePayosNotification(body: unknown): Promise<void> {
+    const notification = this.paymentsService.verifyPayosNotification(body);
+    // The outer success/code values are not signed; only signed data is trusted.
+    if (notification.code !== '00') return;
+    const order = await this.orderModel.findOne({
+      paymentProvider: 'PAYOS', 'payosRequest.orderCode': notification.orderCode,
+    }).exec();
+    // payOS sends signed sample data when registering a webhook. Acknowledge
+    // unknown orders without creating records or marking anything paid.
+    if (!order) return;
+    if (!order.payosRequest || !order.payosStartedAt ||
+      order.paymentMethod !== PaymentMethod.ONLINE ||
+      (order.payosLinkId && order.payosLinkId !== notification.paymentLinkId)) {
+      throw new BadRequestException('Thông báo payOS không khớp yêu cầu thanh toán.');
+    }
+    await this.syncPayosOrder(order, true, notification.paymentLinkId);
+  }
+
+  private async syncPayosOrder(order: OrderDocument, fromWebhook: boolean, expectedLinkId?: string): Promise<void> {
+    if (!order.payosRequest || !order.payosStartedAt) return;
+    const now = new Date();
+    if (!fromWebhook && order.payosSyncedAt && now.getTime() - order.payosSyncedAt.getTime() < 10_000) return;
+    const token = randomUUID();
+    const claimed = await this.orderModel.findOneAndUpdate({
+      _id: order._id,
+      $or: [{ payosLeaseUntil: { $exists: false } }, { payosLeaseUntil: { $lte: now } }],
+      ...(!fromWebhook ? { $and: [{ $or: [
+        { payosSyncedAt: { $exists: false } }, { payosSyncedAt: { $lte: new Date(now.getTime() - 10_000) } },
+      ] }] } : {}),
+    }, { $set: { payosLeaseUntil: new Date(now.getTime() + 30_000), payosLeaseToken: token } }, { new: true }).exec();
+    if (!claimed?.payosRequest) {
+      // A webhook must be retried if another in-flight query may have read an
+      // older status. Browser polling will simply see its current snapshot.
+      if (fromWebhook) throw new ServiceUnavailableException('Payment reconciliation is in progress. Retry notification.');
+      return;
+    }
+    try {
+      const state = await this.paymentsService.getPayosPayment(claimed.payosRequest);
+      if (expectedLinkId && state.paymentLinkId !== expectedLinkId) {
+        throw new BadRequestException('Mã link trong thông báo payOS không khớp giao dịch.');
+      }
+      await this.applyPayosState(order.id as string, state);
+    } finally {
+      await this.orderModel.updateOne({ _id: order._id, payosLeaseToken: token },
+        { $unset: { payosLeaseUntil: 1, payosLeaseToken: 1 } }).exec();
+    }
+  }
+
+  private async applyPayosState(orderId: string, state: PayosPaymentState): Promise<void> {
+    const session = await this.connection.startSession();
+    let confirmedOrder: OrderDocument | undefined;
+    try {
+      await session.withTransaction(async () => {
+        confirmedOrder = undefined;
+        const order = await this.orderModel.findById(orderId).session(session).exec();
+        if (!order?.payosRequest || order.paymentProvider !== 'PAYOS' ||
+          state.orderCode !== order.payosRequest.orderCode || state.amount !== order.total ||
+          state.amount !== order.payosRequest.amount || (order.payosLinkId && order.payosLinkId !== state.paymentLinkId)) {
+          throw new BadRequestException('Kết quả payOS không khớp số tiền hoặc đơn hàng.');
+        }
+        if (state.status === 'PAID' && (state.amountPaid < order.total || state.amountRemaining !== 0)) {
+          throw new BadRequestException('payOS chưa xác nhận đủ số tiền của đơn hàng.');
+        }
+        order.payosLinkId = state.paymentLinkId;
+        order.payosSyncedAt = new Date();
+        // Never downgrade paid money when an older query finishes late.
+        order.payosAmountPaid = Math.max(order.payosAmountPaid ?? 0, state.amountPaid);
+        if ([PaymentStatus.PAID, PaymentStatus.REFUND_PENDING, PaymentStatus.REFUNDED].includes(order.paymentStatus)) {
+          await order.save({ session });
+          return;
+        }
+        order.payosStatus = state.status;
+        if (state.status === 'PAID') {
+          order.paidAt = new Date();
+          order.paymentStatus = order.orderStatus === OrderStatus.CANCELLED
+            ? PaymentStatus.REFUND_PENDING : PaymentStatus.PAID;
+          if (order.paymentStatus === PaymentStatus.PAID) confirmedOrder = order;
+        } else if (['CANCELLED', 'EXPIRED', 'FAILED'].includes(state.status) || order.orderStatus === OrderStatus.CANCELLED) {
+          order.paymentStatus = order.payosAmountPaid > 0 ? PaymentStatus.REFUND_PENDING : PaymentStatus.FAILED;
+        }
+        await order.save({ session });
+      });
+    } finally {
+      await session.endSession();
+    }
+    if (confirmedOrder) {
+      const response = this.toResponse(confirmedOrder);
+      void this.sendPaymentConfirmation(response).catch(() => {
+        this.logger.warn(`Could not send payment email for ${response.orderCode}.`);
+      });
+    }
+  }
+
+  async handleMomoNotification(body: unknown): Promise<void> {
+    const notification = this.paymentsService.verifyMomoNotification(body);
+    const session = await this.connection.startSession();
+    let confirmedOrder: OrderDocument | undefined;
+    try {
+      await session.withTransaction(async () => {
+        confirmedOrder = undefined;
+        const order = await this.orderModel.findOne({
+          paymentProvider: 'MOMO',
+          paymentReference: notification.orderId,
+        }).session(session).exec();
+        const request = order?.momoRequest;
+        if (!order || !request || !order.momoStartedAt ||
+          order.paymentMethod !== PaymentMethod.ONLINE ||
+          notification.partnerCode !== request.partnerCode ||
+          notification.orderId !== request.orderId ||
+          notification.requestId !== request.requestId ||
+          notification.amount !== order.total || notification.amount !== request.amount ||
+          notification.orderInfo !== request.orderInfo || notification.extraData !== request.extraData) {
+          throw new BadRequestException('MoMo notification does not match a payment request.');
+        }
+        if ([PaymentStatus.PAID, PaymentStatus.REFUND_PENDING, PaymentStatus.REFUNDED].includes(order.paymentStatus)) {
+          if (notification.resultCode === 0 && order.momoTransId !== String(notification.transId)) {
+            throw new ConflictException('MoMo transaction does not match the recorded payment.');
+          }
+          return;
+        }
+        order.momoResultCode = notification.resultCode;
+        if (notification.resultCode === 0) {
+          if (Number(notification.transId) <= 0) {
+            throw new BadRequestException('Successful MoMo payment requires a transaction ID.');
+          }
+          order.momoTransId = String(notification.transId);
+          order.paidAt = new Date();
+          order.paymentStatus = order.orderStatus === OrderStatus.CANCELLED
+            ? PaymentStatus.REFUND_PENDING : PaymentStatus.PAID;
+          await order.save({ session });
+          if (order.paymentStatus === PaymentStatus.PAID) {
+            confirmedOrder = order;
+          }
+        } else {
+          if (MOMO_FINAL_FAILURES.has(notification.resultCode)) {
+            order.paymentStatus = PaymentStatus.FAILED;
+          }
+          await order.save({ session });
+        }
+      });
+    } finally {
+      await session.endSession();
+    }
+    if (confirmedOrder) {
+      const response = this.toResponse(confirmedOrder);
+      void this.sendPaymentConfirmation(response).catch(() => {
+        this.logger.warn(`Could not send payment email for ${response.orderCode}.`);
+      });
+    }
+  }
+
+  private async findOwnedOnlineOrder(
+    userId: string,
+    orderCode: string,
+    paymentReference?: string,
+  ): Promise<OrderDocument & { paymentReference: string }> {
+    const order = await this.orderModel.findOne({
+      user: this.toUserObjectId(userId), orderCode: orderCode.trim().toUpperCase(),
+    }).exec();
+    if (!order) throw new NotFoundException('Order not found.');
+    if (order.paymentMethod !== PaymentMethod.ONLINE || !order.paymentReference) {
+      throw new BadRequestException('This order does not use QR payment.');
+    }
+    if (paymentReference !== undefined && order.paymentReference !== paymentReference.trim()) {
+      throw new BadRequestException('QR payment reference does not match the order.');
+    }
+    return order as OrderDocument & { paymentReference: string };
+  }
+
+  private recordCancelledPayment(order: OrderDocument, now: Date): void {
+    if (order.paymentProvider === 'MOMO' || order.paymentProvider === 'PAYOS') {
+      // Cancelling an order is not a gateway refund. Keep it visible for
+      // reconciliation until a separate, verified refund flow is added.
+      order.paymentStatus = PaymentStatus.REFUND_PENDING;
+    } else {
+      order.paymentStatus = PaymentStatus.REFUNDED;
+      order.refundedAt = now;
+    }
   }
 
   async confirmSandboxOnlinePayment(
@@ -592,18 +946,13 @@ export class OrdersService {
     orderCode: string,
     paymentReference: string,
   ): Promise<OrderResponse> {
-    if (!this.paymentsService.canConfirmOnlinePaymentFromCustomer()) {
-      throw new BadRequestException(
-        'A verified payment gateway callback is required to confirm a live QR payment.',
-      );
-    }
-
     const session = await this.connection.startSession();
     let confirmedOrder: OrderDocument | undefined;
     let paymentWasConfirmed = false;
 
     try {
       await session.withTransaction(async () => {
+        paymentWasConfirmed = false;
         const order = await this.orderModel
           .findOne({
             user: this.toUserObjectId(userId),
@@ -624,6 +973,12 @@ export class OrdersService {
           ].includes(order.paymentProvider ?? '')
         ) {
           throw new BadRequestException('This order does not use QR payment.');
+        }
+
+        if (!this.paymentsService.canConfirmOnlinePaymentFromCustomer(order.paymentProvider)) {
+          throw new BadRequestException(
+            'A verified payment gateway callback is required to confirm a live QR payment.',
+          );
         }
 
         if (order.paymentReference !== paymentReference.trim()) {
@@ -695,6 +1050,7 @@ export class OrdersService {
         {
           _id: item.productId,
           status: ProductStatus.ACTIVE,
+          catalogOnly: { $ne: true },
           variants: {
             $elemMatch: {
               _id: item.variantId,
@@ -777,26 +1133,41 @@ export class OrdersService {
   }
 
   private normalizePhone(value: string): string {
-    return value.replace(/\D/g, '');
+    return normalizeVietnameseMobile(value) ?? value.replace(/\D/g, '');
   }
 
   private async sendOrderConfirmation(order: OrderResponse): Promise<void> {
     await this.mailService.sendOrderConfirmationEmail({
-      to: order.customerInfo.email,
-      fullName: order.customerInfo.fullName,
-      orderCode: order.orderCode,
-      total: order.total,
-      paymentMethod: order.paymentMethod,
+      ...this.toMailOrder(order),
     });
   }
 
   private async sendPaymentConfirmation(order: OrderResponse): Promise<void> {
     await this.mailService.sendPaymentConfirmationEmail({
+      ...this.toMailOrder(order),
+    });
+  }
+
+  private toMailOrder(order: OrderResponse) {
+    return {
+      id: order.id,
       to: order.customerInfo.email,
       fullName: order.customerInfo.fullName,
       orderCode: order.orderCode,
       total: order.total,
-    });
+      paymentMethod: order.paymentMethod,
+      createdAt: order.createdAt,
+      ...(order.paidAt ? { paidAt: order.paidAt } : {}),
+      subtotal: order.subtotal,
+      discount: order.discount,
+      shippingFee: order.shippingFee,
+      shippingMethod: order.shippingMethod,
+      orderStatus: order.orderStatus,
+      ...(order.voucher ? { voucher: { code: order.voucher.code } } : {}),
+      ...(order.note ? { note: order.note } : {}),
+      items: order.items,
+      shippingAddress: order.shippingAddress,
+    };
   }
 
   private toResponse(order: OrderDocument): OrderResponse {
@@ -849,6 +1220,9 @@ export class OrdersService {
       shippingMethod: order.shippingMethod,
       paymentMethod: order.paymentMethod,
       paymentStatus: order.paymentStatus,
+      ...(order.paymentProvider === 'PAYOS'
+        ? { receivedPaymentAmount: order.payosAmountPaid ?? 0 }
+        : {}),
       ...(order.paidAt ? { paidAt: order.paidAt } : {}),
       ...(order.refundedAt ? { refundedAt: order.refundedAt } : {}),
       ...(order.paymentProvider ? { paymentProvider: order.paymentProvider } : {}),

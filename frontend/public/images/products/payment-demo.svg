@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 720" role="img" aria-labelledby="title description">
+  <title id="title">Sản phẩm demo 1k</title>
+  <desc id="description">Sản phẩm thử thanh toán 1.000 đồng trên XeDap22h, không giao hàng.</desc>
+  <rect width="960" height="720" rx="32" fill="#eff6ff"/>
+  <rect x="80" y="72" width="800" height="576" rx="32" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
+  <rect x="340" y="140" width="280" height="160" rx="24" fill="#1d4ed8"/>
+  <path d="M340 192h280" stroke="#93c5fd" stroke-width="16"/>
+  <rect x="374" y="244" width="64" height="12" rx="6" fill="#bfdbfe"/>
+  <text x="480" y="376" fill="#0f172a" font-family="Arial,sans-serif" font-size="38" text-anchor="middle" font-weight="700">SẢN PHẨM DEMO</text>
+  <text x="480" y="464" fill="#1d4ed8" font-family="Arial,sans-serif" font-size="76" text-anchor="middle" font-weight="700">1.000 ₫</text>
+  <text x="480" y="532" fill="#475569" font-family="Arial,sans-serif" font-size="27" text-anchor="middle">Thử thanh toán · Không giao hàng</text>
+  <text x="480" y="594" fill="#64748b" font-family="Arial,sans-serif" font-size="22" text-anchor="middle">XeDap22h</text>
+</svg>

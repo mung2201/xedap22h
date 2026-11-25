@@ -1,4 +1,5 @@
 import {
+  Alert,
   AutoComplete,
   Button,
   Card,
@@ -16,7 +17,7 @@ import {
   Typography,
   message,
 } from 'antd';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { brandService } from '../../api/services/brand.service';
 import { categoryService } from '../../api/services/category.service';
@@ -42,13 +43,15 @@ const flattenCategories = (
     ...flattenCategories(category.children, depth + 1),
   ]);
 
-const readNumber = (value: string | null): number | undefined => {
-  if (!value) {
+const readNumber = (value: string | null, minimum = 0): number | undefined => {
+  if (!value?.trim()) {
     return undefined;
   }
 
   const numberValue = Number(value);
-  return Number.isFinite(numberValue) ? numberValue : undefined;
+  return Number.isSafeInteger(numberValue) && numberValue >= minimum
+    ? numberValue
+    : undefined;
 };
 
 export const ProductsPage = () => {
@@ -60,6 +63,8 @@ export const ProductsPage = () => {
   const [facets, setFacets] = useState<ProductFacets | null>(null);
   const [result, setResult] = useState<ProductListResult | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
   const [keyword, setKeyword] = useState(searchParams.get('keyword') ?? '');
   const [isKeywordFocused, setIsKeywordFocused] = useState(false);
   const [priceRange, setPriceRange] = useState<[number, number] | null>(null);
@@ -67,9 +72,11 @@ export const ProductsPage = () => {
   const query = useMemo<ProductListQuery>(() => {
     const sortValue = searchParams.get('sort');
     const bikeType = searchParams.get('bikeType');
+    const minPrice = readNumber(searchParams.get('minPrice'));
+    const maxPrice = readNumber(searchParams.get('maxPrice'));
 
     return {
-      page: readNumber(searchParams.get('page')) ?? 1,
+      page: readNumber(searchParams.get('page'), 1) ?? 1,
       limit: 12,
       keyword: searchParams.get('keyword') ?? undefined,
       category: searchParams.get('category') ?? undefined,
@@ -79,8 +86,12 @@ export const ProductsPage = () => {
       bikeType: Object.values(BikeType).includes(bikeType as BikeType)
         ? (bikeType as BikeType)
         : undefined,
-      minPrice: readNumber(searchParams.get('minPrice')),
-      maxPrice: readNumber(searchParams.get('maxPrice')),
+      minPrice: minPrice !== undefined && maxPrice !== undefined
+        ? Math.min(minPrice, maxPrice)
+        : minPrice,
+      maxPrice: minPrice !== undefined && maxPrice !== undefined
+        ? Math.max(minPrice, maxPrice)
+        : maxPrice,
       onSale: searchParams.get('onSale') === 'true' || undefined,
       inStock: searchParams.get('inStock') === 'true' || undefined,
       featured: searchParams.get('featured') === 'true' || undefined,
@@ -203,22 +214,31 @@ export const ProductsPage = () => {
     setSearchParams(next);
   };
 
-  const loadProducts = useCallback(async (): Promise<void> => {
-    setIsLoading(true);
-
-    try {
-      setResult(await productService.getPublicList(query));
-    } catch (error) {
-      message.error(getErrorMessage(error));
-      setResult(null);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [query]);
-
   useEffect(() => {
-    void loadProducts();
-  }, [loadProducts]);
+    const controller = new AbortController();
+    setIsLoading(true);
+    setLoadError(null);
+
+    void productService.getPublicList(query, controller.signal)
+      .then((nextResult) => {
+        if (!controller.signal.aborted) {
+          setResult(nextResult);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setLoadError(getErrorMessage(error));
+          setResult(null);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => controller.abort();
+  }, [query, retryCount]);
 
   useEffect(() => {
     let isMounted = true;
@@ -237,7 +257,11 @@ export const ProductsPage = () => {
         setBrands(brandList);
         setFacets(productFacets);
       })
-      .catch((error: unknown) => message.error(getErrorMessage(error)));
+      .catch((error: unknown) => {
+        if (isMounted) {
+          message.error(getErrorMessage(error));
+        }
+      });
 
     return () => {
       isMounted = false;
@@ -530,10 +554,14 @@ export const ProductsPage = () => {
         </Space>
       )}
 
-      <section className="catalog-results" aria-live="polite">
+      <section className="catalog-results" aria-live="polite" aria-busy={isLoading}>
         <div className="catalog-results-heading">
           <Typography.Text type="secondary">
-            {result?.meta.total ?? 0} sản phẩm được tìm thấy
+            {isLoading
+              ? 'Đang tìm sản phẩm…'
+              : loadError
+                ? 'Chưa tải được sản phẩm'
+                : `${result?.meta.total ?? 0} sản phẩm được tìm thấy`}
           </Typography.Text>
           <Typography.Text type="secondary">
             Sắp xếp: {
@@ -552,6 +580,14 @@ export const ProductsPage = () => {
           <div className="catalog-loading">
             <Spin size="large" />
           </div>
+        ) : loadError ? (
+          <Alert
+            type="error"
+            showIcon
+            message="Không tải được sản phẩm"
+            description={loadError}
+            action={<Button onClick={() => setRetryCount((count) => count + 1)}>Thử lại</Button>}
+          />
         ) : result?.items.length ? (
           <>
             <ProductGrid products={result.items} />

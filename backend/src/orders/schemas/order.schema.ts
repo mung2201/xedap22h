@@ -11,6 +11,8 @@ import {
   ShippingMethod,
   VoucherDiscountType,
 } from '../../common/enums/commerce.enum';
+import type { MomoCreateRequest } from '../../payments/providers/momo-payment.types';
+import type { PayosCreateRequest } from '../../payments/providers/payos-payment.types';
 
 export type OrderDocument = HydratedDocument<Order>;
 
@@ -39,10 +41,10 @@ export class OrderShippingAddress {
   @Prop({ type: String, required: true, trim: true, maxlength: 120 })
   province!: string;
 
-  @Prop({ type: String, required: true, trim: true, maxlength: 120 })
+  @Prop({ type: String, default: '', trim: true, maxlength: 120 })
   district!: string;
 
-  @Prop({ type: String, required: true, trim: true, maxlength: 120 })
+  @Prop({ type: String, default: '', trim: true, maxlength: 120 })
   ward!: string;
 
   @Prop({ type: String, required: true, trim: true, maxlength: 300 })
@@ -219,6 +221,74 @@ export class Order {
   @Prop({ type: String, trim: true, maxlength: 2048 })
   paymentUrl?: string;
 
+  // Created locally with the order, before any gateway call. This immutable
+  // snapshot contains no credentials and keeps retries on the same request.
+  @Prop({ type: MongooseSchema.Types.Mixed, immutable: true })
+  momoRequest?: MomoCreateRequest;
+
+  @Prop({ type: Date })
+  momoStartedAt?: Date;
+
+  @Prop({ type: Date })
+  momoLeaseUntil?: Date;
+
+  @Prop({ type: String })
+  momoLeaseToken?: string;
+
+  @Prop({ type: String, maxlength: 4096 })
+  momoGatewayUrl?: string;
+
+  @Prop({ type: String, maxlength: 8192 })
+  momoQrPayload?: string;
+
+  @Prop({ type: String, maxlength: 80 })
+  momoTransId?: string;
+
+  @Prop({ type: Number })
+  momoResultCode?: number;
+
+  @Prop({ type: MongooseSchema.Types.Mixed, immutable: true })
+  payosRequest?: PayosCreateRequest;
+
+  @Prop({ type: Date })
+  payosStartedAt?: Date;
+
+  @Prop({ type: Date })
+  payosLeaseUntil?: Date;
+
+  @Prop({ type: String })
+  payosLeaseToken?: string;
+
+  @Prop({ type: String, maxlength: 100 })
+  payosLinkId?: string;
+
+  @Prop({ type: String, maxlength: 4096 })
+  payosGatewayUrl?: string;
+
+  @Prop({ type: String, maxlength: 8192 })
+  payosQrPayload?: string;
+
+  @Prop({ type: String, maxlength: 100 })
+  payosAccountNumber?: string;
+
+  @Prop({ type: String, maxlength: 300 })
+  payosAccountName?: string;
+
+  @Prop({ type: String, maxlength: 20 })
+  payosBankBin?: string;
+
+  @Prop({ type: String, maxlength: 500 })
+  payosDescription?: string;
+
+  @Prop({ type: Number, min: 0 })
+  payosAmountPaid?: number;
+
+  @Prop({ type: String, maxlength: 30 })
+  payosStatus?: string;
+
+  @Prop({ type: Date })
+  payosSyncedAt?: Date;
+
   @Prop({ type: String, enum: OrderStatus, required: true, default: OrderStatus.PENDING, index: true })
   orderStatus!: OrderStatus;
 
@@ -248,3 +318,11 @@ OrderSchema.index({ orderStatus: 1, createdAt: -1 });
 OrderSchema.index({ paymentStatus: 1, createdAt: -1 });
 OrderSchema.index({ paymentStatus: 1, orderStatus: 1, createdAt: -1 });
 OrderSchema.index({ paymentStatus: 1, paidAt: -1 });
+OrderSchema.index(
+  { paymentProvider: 1, paymentReference: 1 },
+  { unique: true, partialFilterExpression: { paymentProvider: 'MOMO', paymentReference: { $type: 'string' } } },
+);
+OrderSchema.index(
+  { 'payosRequest.orderCode': 1 },
+  { unique: true, partialFilterExpression: { 'payosRequest.orderCode': { $type: 'number' } } },
+);

@@ -13,6 +13,7 @@ import {
   Form,
   Input,
   List,
+  Pagination,
   Popconfirm,
   Row,
   Select,
@@ -22,7 +23,7 @@ import {
   Typography,
   message,
 } from 'antd';
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { serviceBookingService } from '../api/services/service-booking.service';
 import { useAuthStore } from '../stores/auth.store';
 import {
@@ -35,6 +36,14 @@ import {
   serviceBookingTypeLabels,
 } from '../types/service-booking';
 import { getErrorMessage } from '../utils/error-message';
+import { PhoneNumberInput } from '../components/common/phone-number-input';
+import { MOBILE_PHONE_MESSAGE, MOBILE_PHONE_PATTERN } from '../utils/address';
+import {
+  formatServiceBookingDate,
+  getNextServiceBookingDate,
+  isFutureServiceBookingDate,
+  toServiceBookingDate,
+} from '../utils/service-booking-date';
 
 interface ServiceBookingFormValues extends Omit<CreateServiceBookingPayload, 'preferredDate'> {
   preferredDate: string;
@@ -48,9 +57,6 @@ const serviceStatusColor: Record<ServiceBookingStatus, string> = {
   [ServiceBookingStatus.CANCELLED]: 'red',
 };
 
-const formatDate = (value: string): string =>
-  new Intl.DateTimeFormat('vi-VN', { dateStyle: 'full' }).format(new Date(value));
-
 const timeSlotOptions = [
   '08:00 - 10:00',
   '10:00 - 12:00',
@@ -59,11 +65,7 @@ const timeSlotOptions = [
   '17:00 - 19:00',
 ];
 
-const tomorrow = (): string => {
-  const date = new Date();
-  date.setDate(date.getDate() + 1);
-  return date.toISOString().slice(0, 10);
-};
+const pageSize = 12;
 
 export const ServiceBookingPage = () => {
   const user = useAuthStore((state) => state.user);
@@ -71,33 +73,68 @@ export const ServiceBookingPage = () => {
   const [result, setResult] = useState<ServiceBookingListResult | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const mutationInFlight = useRef(false);
+  const isMounted = useRef(false);
+  const isMutating = isSaving || cancellingId !== null;
 
-  const loadBookings = useCallback(async (): Promise<void> => {
-    setIsLoading(true);
-    try {
-      setResult(await serviceBookingService.getMine({ page: 1, limit: 12 }));
-    } catch (error) {
-      message.error(getErrorMessage(error));
-    } finally {
-      setIsLoading(false);
-    }
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
   }, []);
 
   useEffect(() => {
     form.setFieldsValue({
       contactName: user?.fullName,
       serviceType: ServiceBookingType.MAINTENANCE,
-      preferredDate: tomorrow(),
+      preferredDate: getNextServiceBookingDate(),
       preferredTimeSlot: timeSlotOptions[0],
       serviceLocation: 'XeDap22h - vui lòng liên hệ xác nhận chi nhánh',
     });
   }, [form, user?.fullName]);
 
   useEffect(() => {
+    const controller = new AbortController();
+    const loadBookings = async (): Promise<void> => {
+      setIsLoading(true);
+      setErrorMessage(null);
+      setResult(null);
+      try {
+        const nextResult = await serviceBookingService.getMine(
+          { page, limit: pageSize },
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
+        const lastPage = Math.max(1, nextResult.meta.totalPages ?? 1);
+        if (page > lastPage) {
+          setPage(lastPage);
+          return;
+        }
+        setResult(nextResult);
+      } catch (error) {
+        if (!controller.signal.aborted) setErrorMessage(getErrorMessage(error));
+      } finally {
+        if (!controller.signal.aborted) setIsLoading(false);
+      }
+    };
     void loadBookings();
-  }, [loadBookings]);
+    return () => controller.abort();
+  }, [page, reloadKey, user?.id]);
+
+  const reloadBookings = (): void => setReloadKey((value) => value + 1);
 
   const createBooking = async (values: ServiceBookingFormValues): Promise<void> => {
+    if (mutationInFlight.current) return;
+    if (!isFutureServiceBookingDate(values.preferredDate)) {
+      form.setFields([{ name: 'preferredDate', errors: ['Chọn ngày hẹn từ ngày mai theo giờ Việt Nam.'] }]);
+      return;
+    }
+    mutationInFlight.current = true;
     setIsSaving(true);
     try {
       await serviceBookingService.create({
@@ -108,32 +145,42 @@ export const ServiceBookingPage = () => {
         bicycleBrand: values.bicycleBrand?.trim() || undefined,
         bicycleModel: values.bicycleModel?.trim() || undefined,
         description: values.description.trim(),
-        preferredDate: new Date(`${values.preferredDate}T09:00:00`).toISOString(),
+        preferredDate: toServiceBookingDate(values.preferredDate),
       });
+      if (!isMounted.current) return;
       message.success('Đã gửi yêu cầu đặt lịch. Shop sẽ xác nhận qua email.');
       form.setFieldsValue({
         serviceType: ServiceBookingType.MAINTENANCE,
-        preferredDate: tomorrow(),
+        preferredDate: getNextServiceBookingDate(),
         preferredTimeSlot: timeSlotOptions[0],
         bicycleBrand: undefined,
         bicycleModel: undefined,
         description: undefined,
       });
-      await loadBookings();
+      setPage(1);
+      reloadBookings();
     } catch (error) {
-      message.error(getErrorMessage(error));
+      if (isMounted.current) message.error(getErrorMessage(error));
     } finally {
-      setIsSaving(false);
+      mutationInFlight.current = false;
+      if (isMounted.current) setIsSaving(false);
     }
   };
 
   const cancelBooking = async (booking: ServiceBooking): Promise<void> => {
+    if (mutationInFlight.current) return;
+    mutationInFlight.current = true;
+    setCancellingId(booking.id);
     try {
       await serviceBookingService.cancel(booking.id, 'Khách hàng chủ động hủy lịch hẹn.');
+      if (!isMounted.current) return;
       message.success('Đã hủy lịch hẹn.');
-      await loadBookings();
+      reloadBookings();
     } catch (error) {
-      message.error(getErrorMessage(error));
+      if (isMounted.current) message.error(getErrorMessage(error));
+    } finally {
+      mutationInFlight.current = false;
+      if (isMounted.current) setCancellingId(null);
     }
   };
 
@@ -155,10 +202,15 @@ export const ServiceBookingPage = () => {
         <ToolOutlined aria-hidden />
       </section>
 
-      <Row gutter={[28, 28]} align="top">
+      <Row gutter={[{ xs: 16, md: 28 }, 28]} align="top">
         <Col xs={24} lg={14}>
           <Card className="service-booking-form-card" title="Thông tin lịch hẹn">
-            <Form<ServiceBookingFormValues> form={form} layout="vertical" onFinish={createBooking}>
+            <Form<ServiceBookingFormValues>
+              form={form}
+              layout="vertical"
+              disabled={isMutating}
+              onFinish={createBooking}
+            >
               <Row gutter={[16, 0]}>
                 <Col xs={24} md={12}>
                   <Form.Item
@@ -189,19 +241,27 @@ export const ServiceBookingPage = () => {
                     label="Số điện thoại"
                     rules={[
                       { required: true, message: 'Nhập số điện thoại.' },
-                      { min: 8, message: 'Số điện thoại chưa hợp lệ.' },
+                      { pattern: MOBILE_PHONE_PATTERN, message: MOBILE_PHONE_MESSAGE },
                     ]}
                   >
-                    <Input inputMode="tel" maxLength={25} placeholder="0901234567" />
+                    <PhoneNumberInput />
                   </Form.Item>
                 </Col>
                 <Col xs={24} md={12}>
                   <Form.Item
                     name="preferredDate"
                     label="Ngày mong muốn"
-                    rules={[{ required: true, message: 'Chọn ngày hẹn.' }]}
+                    rules={[
+                      { required: true, message: 'Chọn ngày hẹn.' },
+                      {
+                        validator: (_, value: string | undefined) =>
+                          !value || isFutureServiceBookingDate(value)
+                            ? Promise.resolve()
+                            : Promise.reject(new Error('Chọn ngày hẹn từ ngày mai theo giờ Việt Nam.')),
+                      },
+                    ]}
                   >
-                    <Input type="date" min={tomorrow()} />
+                    <Input type="date" min={getNextServiceBookingDate()} />
                   </Form.Item>
                 </Col>
                 <Col xs={24} md={12}>
@@ -257,7 +317,7 @@ export const ServiceBookingPage = () => {
           <Card
             className="service-booking-list-card"
             title="Lịch hẹn của tôi"
-            extra={<Button type="link" onClick={() => void loadBookings()}>Làm mới</Button>}
+            extra={<Button type="link" disabled={isMutating} onClick={reloadBookings}>Làm mới</Button>}
           >
             <Alert
               type="info"
@@ -266,6 +326,14 @@ export const ServiceBookingPage = () => {
             />
             {isLoading ? (
               <Spin className="service-booking-loading" />
+            ) : errorMessage ? (
+              <Alert
+                type="error"
+                showIcon
+                message="Không thể tải lịch hẹn"
+                description={errorMessage}
+                action={<Button onClick={reloadBookings}>Thử lại</Button>}
+              />
             ) : visibleBookings.length ? (
               <List
                 className="service-booking-list"
@@ -286,9 +354,18 @@ export const ServiceBookingPage = () => {
                                 description="Shop sẽ nhận được thông báo hủy lịch của bạn."
                                 okText="Hủy lịch"
                                 cancelText="Quay lại"
-                                onConfirm={() => void cancelBooking(booking)}
+                                disabled={isMutating}
+                                okButtonProps={{ loading: cancellingId === booking.id }}
+                                onConfirm={() => cancelBooking(booking)}
                               >
-                                <Button danger type="link" size="small" icon={<DeleteOutlined />}>
+                                <Button
+                                  danger
+                                  type="link"
+                                  size="small"
+                                  disabled={isMutating}
+                                  loading={cancellingId === booking.id}
+                                  icon={<DeleteOutlined />}
+                                >
                                   Hủy
                                 </Button>
                               </Popconfirm>,
@@ -309,7 +386,7 @@ export const ServiceBookingPage = () => {
                           <Space direction="vertical" size={2}>
                             <Typography.Text>{serviceBookingTypeLabels[booking.serviceType]}</Typography.Text>
                             <Typography.Text type="secondary">
-                              <CalendarOutlined /> {formatDate(booking.preferredDate)}
+                              <CalendarOutlined /> {formatServiceBookingDate(booking.preferredDate)}
                             </Typography.Text>
                             <Typography.Text type="secondary">
                               <ClockCircleOutlined /> {booking.preferredTimeSlot}
@@ -329,6 +406,18 @@ export const ServiceBookingPage = () => {
             ) : (
               <Empty description="Chưa có lịch hẹn nào" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             )}
+            {!isLoading && !errorMessage && result && (result.meta.totalPages ?? 1) > 1 ? (
+              <Pagination
+                className="orders-pagination"
+                current={page}
+                pageSize={pageSize}
+                total={result.meta.total}
+                showSizeChanger={false}
+                responsive
+                disabled={isMutating}
+                onChange={setPage}
+              />
+            ) : null}
           </Card>
         </Col>
       </Row>

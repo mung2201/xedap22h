@@ -76,6 +76,7 @@ export interface ProductResponse {
   thumbnail: string;
   status: ProductStatus;
   featured: boolean;
+  catalogOnly: boolean;
   bikeType?: BikeType;
   frameMaterial?: string;
   wheelSize?: string;
@@ -143,6 +144,7 @@ interface ProductQueryOptions {
 }
 
 interface ProductRuleInput {
+  catalogOnly?: boolean;
   productType: ProductType;
   originalPrice: number;
   salePrice: number;
@@ -345,6 +347,12 @@ export class ProductsService {
       throw new NotFoundException('Product is not available.');
     }
 
+    if (product.catalogOnly) {
+      throw new BadRequestException(
+        'Sản phẩm đang được xác nhận thông tin bán hàng. Vui lòng liên hệ cửa hàng.',
+      );
+    }
+
     await this.assertPublicReferences(product);
 
     const variant = product.variants.find(
@@ -439,6 +447,7 @@ export class ProductsService {
 
     const variants = this.normalizeVariants(dto.variants);
     this.assertProductRules({
+      catalogOnly: dto.catalogOnly ?? false,
       productType: dto.productType,
       originalPrice: dto.originalPrice,
       salePrice: dto.salePrice,
@@ -465,6 +474,7 @@ export class ProductsService {
       thumbnail: dto.thumbnail,
       status: dto.status ?? ProductStatus.ACTIVE,
       featured: dto.featured ?? false,
+      catalogOnly: dto.catalogOnly ?? false,
       ...(dto.productType === ProductType.BICYCLE
         ? {
             bikeType: dto.bikeType,
@@ -521,6 +531,7 @@ export class ProductsService {
     }
 
     this.assertProductRules({
+      catalogOnly: dto.catalogOnly ?? product.catalogOnly ?? false,
       productType,
       originalPrice,
       salePrice,
@@ -707,6 +718,7 @@ export class ProductsService {
 
     if (query.onSale) {
       filter.$expr = { $lt: ['$salePrice', '$originalPrice'] };
+      filter.catalogOnly = { $ne: true };
     }
 
     if (query.featured) {
@@ -724,6 +736,7 @@ export class ProductsService {
     }
 
     if (query.inStock) {
+      filter.catalogOnly = { $ne: true };
       variantFilter.stock = { $gt: 0 };
     }
 
@@ -741,7 +754,7 @@ export class ProductsService {
       );
     }
 
-    if (input.productType === ProductType.BICYCLE) {
+    if (!input.catalogOnly && input.productType === ProductType.BICYCLE) {
       if (
         !input.bikeType ||
         !input.frameMaterial ||
@@ -757,17 +770,25 @@ export class ProductsService {
     const skuSet = new Set<string>();
     const combinationSet = new Set<string>();
 
+    if (!input.catalogOnly && !input.variants.length) {
+      throw new BadRequestException('A product for sale must have at least one variant.');
+    }
+
     for (const variant of input.variants) {
       const sku = this.normalizeSku(variant.sku);
-      const combination = `${variant.color.trim().toLowerCase()}::${variant.size
-        .trim()
-        .toLowerCase()}`;
+      const color = variant.color.trim().toLowerCase();
+      const size = variant.size.trim().toLowerCase();
+      const combination = `${color}::${size}`;
+
+      if (!input.catalogOnly && (!color || !size)) {
+        throw new BadRequestException('Each variant for sale must have a color and size.');
+      }
 
       if (skuSet.has(sku)) {
         throw new BadRequestException('Variant SKU values must be unique.');
       }
 
-      if (combinationSet.has(combination)) {
+      if (color && size && combinationSet.has(combination)) {
         throw new BadRequestException(
           'Each color and size combination can only appear once.',
         );
@@ -778,7 +799,7 @@ export class ProductsService {
       }
 
       skuSet.add(sku);
-      combinationSet.add(combination);
+      if (color && size) combinationSet.add(combination);
     }
   }
 
@@ -886,12 +907,26 @@ export class ProductsService {
       ]),
     );
 
-    return incomingVariants.map((variant) => {
-      const existing =
-        existingBySku.get(this.normalizeSku(variant.sku)) ??
-        existingByCombination.get(
+    // Reserve every SKU match first so a renamed variant cannot claim the ID
+    // of another SKU that appears later in the incoming list.
+    const skuMatches = incomingVariants.map((variant) =>
+      existingBySku.get(this.normalizeSku(variant.sku)),
+    );
+    const claimedIds = new Set(
+      skuMatches.flatMap((variant) => variant ? [variant._id.toString()] : []),
+    );
+
+    return incomingVariants.map((variant, index) => {
+      let existing = skuMatches[index];
+      if (!existing && variant.color.trim() && variant.size.trim()) {
+        const combinationMatch = existingByCombination.get(
           this.variantCombinationKey(variant.color, variant.size),
         );
+        if (combinationMatch && !claimedIds.has(combinationMatch._id.toString())) {
+          existing = combinationMatch;
+          claimedIds.add(combinationMatch._id.toString());
+        }
+      }
 
       return existing ? { ...variant, _id: existing._id } : variant;
     });
@@ -977,20 +1012,22 @@ export class ProductsService {
   }
 
   private getSort(sort: ProductSort): Record<string, 1 | -1> {
+    // Imports can share timestamps, prices and ratings. A unique final key
+    // keeps skip/limit pagination stable when the selected values are equal.
     switch (sort) {
       case ProductSort.OLDEST:
-        return { createdAt: 1 };
+        return { createdAt: 1, _id: 1 };
       case ProductSort.PRICE_ASC:
-        return { salePrice: 1, createdAt: -1 };
+        return { salePrice: 1, createdAt: -1, _id: -1 };
       case ProductSort.PRICE_DESC:
-        return { salePrice: -1, createdAt: -1 };
+        return { salePrice: -1, createdAt: -1, _id: -1 };
       case ProductSort.BEST_SELLING:
-        return { soldCount: -1, createdAt: -1 };
+        return { soldCount: -1, createdAt: -1, _id: -1 };
       case ProductSort.RATING_DESC:
-        return { averageRating: -1, reviewCount: -1, createdAt: -1 };
+        return { averageRating: -1, reviewCount: -1, createdAt: -1, _id: -1 };
       case ProductSort.NEWEST:
       default:
-        return { featured: -1, createdAt: -1 };
+        return { featured: -1, createdAt: -1, _id: -1 };
     }
   }
 
@@ -1017,7 +1054,7 @@ export class ProductsService {
         ...(variant.imageUrl ? { imageUrl: variant.imageUrl } : {}),
       };
     });
-    const availableStock = variants.reduce(
+    const availableStock = product.catalogOnly ? 0 : variants.reduce(
       (total, variant) => total + variant.stock,
       0,
     );
@@ -1048,6 +1085,7 @@ export class ProductsService {
       thumbnail: product.thumbnail,
       status: product.status,
       featured: product.featured,
+      catalogOnly: product.catalogOnly ?? false,
       ...(product.bikeType ? { bikeType: product.bikeType } : {}),
       ...(product.frameMaterial ? { frameMaterial: product.frameMaterial } : {}),
       ...(product.wheelSize ? { wheelSize: product.wheelSize } : {}),

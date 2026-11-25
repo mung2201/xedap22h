@@ -137,12 +137,12 @@ export const AdminProductQuestionsPage = () => {
       title: 'Nội dung',
       key: 'content',
       render: (_, question) => (
-        <Space direction="vertical" size={4}>
-          <Typography.Text strong ellipsis={{ tooltip: question.question }}>
+        <Space direction="vertical" size={4} style={{ display: 'flex', width: '100%', minWidth: 0, overflow: 'hidden' }}>
+          <Typography.Text strong style={{ display: 'block', width: '100%' }} ellipsis={{ tooltip: question.question }}>
             {question.question}
           </Typography.Text>
           {question.answer ? (
-            <Typography.Text type="secondary" ellipsis={{ tooltip: question.answer.content }}>
+            <Typography.Text type="secondary" style={{ display: 'block', width: '100%' }} ellipsis={{ tooltip: question.answer.content }}>
               Phản hồi: {question.answer.content}
             </Typography.Text>
           ) : (
@@ -225,6 +225,7 @@ export const AdminProductQuestionsPage = () => {
 
       <Table
         rowKey="id"
+        tableLayout="fixed"
         loading={isLoading}
         columns={columns}
         dataSource={questions}

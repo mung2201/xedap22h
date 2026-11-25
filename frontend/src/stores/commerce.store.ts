@@ -13,34 +13,53 @@ interface CommerceState {
   reset: () => void;
 }
 
-export const useCommerceStore = create<CommerceState>((set) => ({
-  cartItemCount: 0,
-  wishlistCount: 0,
-  isRefreshingCounts: false,
+export const useCommerceStore = create<CommerceState>((set) => {
+  let refreshVersion = 0;
+  let cartVersion = 0;
+  let wishlistVersion = 0;
 
-  setCart: (cart) => set({ cartItemCount: cart.totalItems }),
-  setWishlist: (wishlist) => set({ wishlistCount: wishlist.count }),
+  return {
+    cartItemCount: 0,
+    wishlistCount: 0,
+    isRefreshingCounts: false,
 
-  refreshCounts: async () => {
-    set({ isRefreshingCounts: true });
+    setCart: (cart) => {
+      cartVersion += 1;
+      set({ cartItemCount: cart.totalItems });
+    },
+    setWishlist: (wishlist) => {
+      wishlistVersion += 1;
+      set({ wishlistCount: wishlist.count });
+    },
 
-    try {
-      const [cart, wishlist] = await Promise.all([
+    refreshCounts: async () => {
+      const requestVersion = ++refreshVersion;
+      const requestedCartVersion = cartVersion;
+      const requestedWishlistVersion = wishlistVersion;
+      set({ isRefreshingCounts: true });
+
+      const [cart, wishlist] = await Promise.allSettled([
         cartService.getMine(),
         wishlistService.getMine(),
       ]);
-      set({
-        cartItemCount: cart.totalItems,
-        wishlistCount: wishlist.count,
-        isRefreshingCounts: false,
-      });
-    } catch {
-      // Individual screens present request errors. Header badges should not keep
-      // stale values after an expired session or a failed initial request.
-      set({ cartItemCount: 0, wishlistCount: 0, isRefreshingCounts: false });
-    }
-  },
+      if (requestVersion !== refreshVersion) return;
 
-  reset: () =>
-    set({ cartItemCount: 0, wishlistCount: 0, isRefreshingCounts: false }),
-}));
+      // A screen mutation or logout takes precedence over an older badge refresh.
+      // Keep each known count when only the other service succeeds.
+      set((state) => ({
+        cartItemCount: requestedCartVersion === cartVersion && cart.status === 'fulfilled'
+          ? cart.value.totalItems : state.cartItemCount,
+        wishlistCount: requestedWishlistVersion === wishlistVersion && wishlist.status === 'fulfilled'
+          ? wishlist.value.count : state.wishlistCount,
+        isRefreshingCounts: false,
+      }));
+    },
+
+    reset: () => {
+      refreshVersion += 1;
+      cartVersion += 1;
+      wishlistVersion += 1;
+      set({ cartItemCount: 0, wishlistCount: 0, isRefreshingCounts: false });
+    },
+  };
+});

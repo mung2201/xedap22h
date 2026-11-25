@@ -10,6 +10,7 @@ import { ConfirmMockPaymentDto } from './dto/confirm-mock-payment.dto';
 import { ConfirmSandboxQrPaymentDto } from './dto/confirm-sandbox-qr-payment.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { MyOrdersQueryDto } from './dto/my-orders-query.dto';
+import { StartOnlinePaymentDto } from './dto/start-online-payment.dto';
 import {
   OnlinePaymentResponse,
   OrderResponse,
@@ -21,6 +22,12 @@ import {
 @Controller({ path: 'orders', version: '1' })
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
+
+  @Get('payment-options')
+  @ApiOperation({ summary: 'Get the configured online payment option without credentials' })
+  getPaymentOptions() {
+    return this.ordersService.getOnlinePaymentOptions();
+  }
 
   @Post()
   @ApiOperation({ summary: 'Create an order from the authenticated user cart' })
@@ -57,6 +64,26 @@ export class OrdersController {
       orderCode,
       paymentReference,
     );
+  }
+
+  @Post('online-payment/:orderCode/start')
+  @ApiOperation({ summary: 'Create or resume the owned gateway payment after order commit' })
+  startOnlinePayment(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('orderCode') orderCode: string,
+    @Body() dto: StartOnlinePaymentDto,
+  ): Promise<OnlinePaymentResponse> {
+    return this.ordersService.startOnlinePayment(user.userId, orderCode, dto.paymentReference);
+  }
+
+  @Post('online-payment/:orderCode/sync')
+  @ApiOperation({ summary: 'Check the owned payment against the authenticated payOS API' })
+  syncOnlinePayment(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('orderCode') orderCode: string,
+    @Body() dto: StartOnlinePaymentDto,
+  ): Promise<OnlinePaymentResponse> {
+    return this.ordersService.syncOnlinePayment(user.userId, orderCode, dto.paymentReference);
   }
 
   @Post('online-payment/:orderCode/confirm')

@@ -7,7 +7,9 @@ import {
   IsString,
   Length,
   MaxLength,
+  Matches,
 } from 'class-validator';
+import { normalizeVietnameseMobile } from '../../common/utils/phone.util';
 import { PaymentMethod } from '../../common/enums/commerce.enum';
 import { CheckoutPreviewDto } from '../../checkout/dto/checkout-preview.dto';
 
@@ -32,6 +34,18 @@ export class CreateOrderDto extends CheckoutPreviewDto {
   @IsEmail()
   @MaxLength(255)
   customerEmail?: string;
+
+  @ApiPropertyOptional({
+    example: '0912345678',
+    description: 'Contact mobile number for this order; accepts 0, 84 or +84 prefixes.',
+  })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => typeof value === 'string'
+    ? value.trim() ? normalizeVietnameseMobile(value) ?? value.trim() : undefined
+    : value)
+  @IsString()
+  @Matches(/^0[35789]\d{8}$/, { message: 'customerPhone must be a valid Vietnamese mobile number.' })
+  customerPhone?: string;
 
   @ApiPropertyOptional({ example: 'Call before delivery.' })
   @IsOptional()

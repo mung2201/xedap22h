@@ -15,15 +15,25 @@ const toOrderListResult = (response: ApiResponse<Order[]>): OrderListResult => (
 });
 
 export const adminOrderService = {
-  async getList(query: AdminOrderQuery = {}): Promise<OrderListResult> {
+  async getList(query: AdminOrderQuery = {}, signal?: AbortSignal): Promise<OrderListResult> {
     const response = await apiClient.get<ApiResponse<Order[]>>('/admin/orders', {
       params: query,
+      signal,
     });
     return toOrderListResult(response.data);
   },
 
-  async getById(orderId: string): Promise<Order> {
-    const response = await apiClient.get<ApiResponse<Order>>(`/admin/orders/${orderId}`);
+  async getById(orderId: string, signal?: AbortSignal): Promise<Order> {
+    const response = await apiClient.get<ApiResponse<Order>>(`/admin/orders/${orderId}`, { signal });
+    return response.data.data;
+  },
+
+  async syncPayment(orderId: string, signal?: AbortSignal): Promise<Order> {
+    const response = await apiClient.post<ApiResponse<Order>>(
+      `/admin/orders/${orderId}/payment/sync`,
+      {},
+      { signal, timeout: 30_000 },
+    );
     return response.data.data;
   },
 

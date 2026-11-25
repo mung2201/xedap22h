@@ -9,7 +9,10 @@
     "start": "node dist/main.js",
     "start:dev": "npm run build && node dist/main.js",
     "typecheck": "tsc --noEmit",
-    "seed": "npm run build && node dist/seed/seed.js"
+    "seed": "npm run build && node dist/seed/seed.js",
+    "demo:payment-product": "npm run build && node dist/demo/create-payment-demo-product.js",
+    "test": "npm run build && node --test test/*.test.cjs",
+    "test:e2e": "npm run build && node test/e2e/run.cjs"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.6",

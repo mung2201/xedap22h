@@ -4,6 +4,7 @@ import {
   PlusOutlined,
 } from '@ant-design/icons';
 import {
+  Alert,
   Button,
   Card,
   Col,
@@ -18,7 +19,7 @@ import {
   Typography,
   message,
 } from 'antd';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { brandService } from '../../api/services/brand.service';
 import { categoryService } from '../../api/services/category.service';
@@ -47,10 +48,26 @@ const flattenCategories = (
     ...flattenCategories(category.children, depth + 1),
   ]);
 
+const normalizeImageUrl = (value: string): string => {
+  const url = value.trim();
+  if (url.startsWith('/images/')) {
+    return new URL(url, window.location.origin).href;
+  }
+  if (url.startsWith('/uploads/')) {
+    const apiUrl = new URL(
+      import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api/v1',
+      window.location.origin,
+    );
+    return new URL(url, apiUrl.origin).href;
+  }
+  return url;
+};
+
 const initialValues: Partial<ProductPayload> = {
   productType: ProductType.BICYCLE,
   status: ProductStatus.ACTIVE,
   featured: false,
+  catalogOnly: false,
   images: [{ url: '', alt: '', sortOrder: 0 }],
   specifications: [],
   variants: [
@@ -75,14 +92,29 @@ export const AdminProductFormPage = () => {
   const [brands, setBrands] = useState<Brand[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [loadedProductKey, setLoadedProductKey] = useState<string | null>(null);
+  const requestScopeRef = useRef(0);
+  const savingRef = useRef(false);
+  const savedVariantStocks = useRef<Record<string, number>>({});
+  const productKey = productId ?? 'new';
   const productType = Form.useWatch('productType', form) ?? ProductType.BICYCLE;
+  const catalogOnly = Form.useWatch('catalogOnly', form) ?? false;
   const isEditing = Boolean(productId);
 
   useEffect(() => {
-    let isMounted = true;
+    const requestScope = ++requestScopeRef.current;
+    const isCurrent = () => requestScopeRef.current === requestScope;
 
     const load = async (): Promise<void> => {
       setIsLoading(true);
+      setLoadError(null);
+      setLoadedProductKey(null);
+      setIsSaving(false);
+      savingRef.current = false;
+      savedVariantStocks.current = {};
+      form.resetFields();
 
       try {
         const [categoryTree, brandList, product] = await Promise.all([
@@ -91,7 +123,7 @@ export const AdminProductFormPage = () => {
           productId ? productService.getAdminById(productId) : Promise.resolve(null),
         ]);
 
-        if (!isMounted) {
+        if (!isCurrent()) {
           return;
         }
 
@@ -99,6 +131,9 @@ export const AdminProductFormPage = () => {
         setBrands(brandList);
 
         if (product) {
+          savedVariantStocks.current = Object.fromEntries(
+            product.variants.map((variant) => [variant.sku, variant.stock]),
+          );
           form.setFieldsValue({
             name: product.name,
             slug: product.slug,
@@ -117,6 +152,7 @@ export const AdminProductFormPage = () => {
             })),
             thumbnail: product.thumbnail,
             status: product.status,
+            catalogOnly: product.catalogOnly ?? false,
             featured: product.featured,
             bikeType: product.bikeType,
             frameMaterial: product.frameMaterial,
@@ -132,7 +168,7 @@ export const AdminProductFormPage = () => {
               colorHex: variant.colorHex,
               size: variant.size,
               sku: variant.sku,
-              stock: variant.stock,
+              stock: product.catalogOnly ? undefined : variant.stock,
               priceAdjustment: variant.priceAdjustment,
               imageUrl: variant.imageUrl,
             })),
@@ -140,12 +176,13 @@ export const AdminProductFormPage = () => {
         } else {
           form.setFieldsValue(initialValues);
         }
+        setLoadedProductKey(productKey);
       } catch (error) {
-        if (isMounted) {
-          message.error(getErrorMessage(error));
+        if (isCurrent()) {
+          setLoadError(getErrorMessage(error));
         }
       } finally {
-        if (isMounted) {
+        if (isCurrent()) {
           setIsLoading(false);
         }
       }
@@ -154,72 +191,87 @@ export const AdminProductFormPage = () => {
     void load();
 
     return () => {
-      isMounted = false;
+      requestScopeRef.current += 1;
     };
-  }, [form, productId]);
+  }, [form, loadAttempt, productId, productKey]);
 
   const handleSubmit = async (values: ProductPayload): Promise<void> => {
-    if (!values.variants?.length) {
+    if (savingRef.current || isLoading || loadError || loadedProductKey !== productKey) {
+      return;
+    }
+    if (!values.catalogOnly && !values.variants?.length) {
       message.error('Sản phẩm cần có ít nhất một biến thể.');
       return;
     }
 
+    savingRef.current = true;
     setIsSaving(true);
-    const payload: ProductPayload = {
-      ...values,
-      name: values.name.trim(),
-      slug: values.slug?.trim() || undefined,
-      sku: values.sku.trim().toUpperCase(),
-      shortDescription: values.shortDescription.trim(),
-      description: values.description.trim(),
-      thumbnail: values.thumbnail.trim(),
-      images: values.images.map((image, index) => ({
-        url: image.url.trim(),
-        alt: image.alt?.trim() || undefined,
-        sortOrder: image.sortOrder ?? index,
-      })),
-      specifications: (values.specifications ?? [])
-        .filter((specification) => specification.label?.trim() && specification.value?.trim())
-        .map((specification) => ({
-          label: specification.label.trim(),
-          value: specification.value.trim(),
-          group: specification.group?.trim() || undefined,
-        })),
-      variants: values.variants.map((variant) => ({
-        color: variant.color.trim(),
-        colorHex: variant.colorHex?.trim() || undefined,
-        size: variant.size.trim(),
-        sku: variant.sku.trim().toUpperCase(),
-        stock: Number(variant.stock),
-        priceAdjustment: Number(variant.priceAdjustment ?? 0),
-        imageUrl: variant.imageUrl?.trim() || undefined,
-      })),
-    };
-
-    if (payload.productType === ProductType.ACCESSORY) {
-      delete payload.bikeType;
-      delete payload.frameMaterial;
-      delete payload.wheelSize;
-      delete payload.weight;
-    }
+    const requestScope = requestScopeRef.current;
+    const isCurrent = () => requestScopeRef.current === requestScope;
 
     try {
+      const payload: ProductPayload = {
+        ...values,
+        name: values.name.trim(),
+        slug: values.slug?.trim() || undefined,
+        sku: values.sku.trim().toUpperCase(),
+        shortDescription: values.shortDescription.trim(),
+        description: values.description.trim(),
+        thumbnail: normalizeImageUrl(values.thumbnail),
+        images: values.images.map((image, index) => ({
+          url: normalizeImageUrl(image.url),
+          alt: image.alt?.trim() || undefined,
+          sortOrder: image.sortOrder ?? index,
+        })),
+        specifications: (values.specifications ?? [])
+          .filter((specification) => specification?.label?.trim() && specification?.value?.trim())
+          .map((specification) => ({
+            label: specification.label.trim(),
+            value: specification.value.trim(),
+            group: specification.group?.trim() || undefined,
+          })),
+        variants: (values.variants ?? []).map((variant) => ({
+          color: variant.color?.trim() ?? '',
+          colorHex: variant.colorHex?.trim() || undefined,
+          size: variant.size?.trim() ?? '',
+          sku: variant.sku.trim().toUpperCase(),
+          stock: values.catalogOnly && variant.stock == null
+            ? (savedVariantStocks.current[variant.sku] ?? 0)
+            : Number(variant.stock),
+          priceAdjustment: Number(variant.priceAdjustment ?? 0),
+          imageUrl: variant.imageUrl ? normalizeImageUrl(variant.imageUrl) || undefined : undefined,
+        })),
+      };
+
+      if (payload.productType === ProductType.ACCESSORY) {
+        delete payload.bikeType;
+        delete payload.frameMaterial;
+        delete payload.wheelSize;
+        delete payload.weight;
+      }
+
       if (productId) {
         await productService.update(productId, payload);
-        message.success('Đã cập nhật sản phẩm.');
       } else {
         await productService.create(payload);
-        message.success('Đã tạo sản phẩm.');
       }
-      navigate('/admin/products');
+      if (isCurrent()) {
+        message.success(productId ? 'Đã cập nhật sản phẩm.' : 'Đã tạo sản phẩm.');
+        navigate('/admin/products');
+      }
     } catch (error) {
-      message.error(getErrorMessage(error));
+      if (isCurrent()) {
+        message.error(getErrorMessage(error));
+      }
     } finally {
-      setIsSaving(false);
+      if (isCurrent()) {
+        savingRef.current = false;
+        setIsSaving(false);
+      }
     }
   };
 
-  if (isLoading) {
+  if (isLoading || (!loadError && loadedProductKey !== productKey)) {
     return (
       <div className="catalog-loading admin-form-loading">
         <Spin size="large" />
@@ -240,11 +292,21 @@ export const AdminProductFormPage = () => {
         </div>
       </div>
 
+      {loadError ? (
+        <Alert
+          type="error"
+          showIcon
+          message="Không thể tải thông tin sản phẩm"
+          description={loadError}
+          action={<Button onClick={() => setLoadAttempt((attempt) => attempt + 1)}>Thử lại</Button>}
+        />
+      ) : (
       <Form<ProductPayload>
         form={form}
         layout="vertical"
         initialValues={initialValues}
         onFinish={handleSubmit}
+        disabled={isSaving}
       >
         <Row gutter={[24, 24]}>
           <Col xs={24} xl={16}>
@@ -314,7 +376,7 @@ export const AdminProductFormPage = () => {
               <Card title="Thông tin xe đạp" className="admin-form-card">
                 <Row gutter={16}>
                   <Col xs={24} md={12}>
-                    <Form.Item name="bikeType" label="Loại xe" rules={[{ required: true }]}>
+                    <Form.Item name="bikeType" label="Loại xe" rules={[{ required: !catalogOnly }]}>
                       <Select
                         options={Object.values(BikeType).map((type) => ({
                           value: type,
@@ -324,17 +386,17 @@ export const AdminProductFormPage = () => {
                     </Form.Item>
                   </Col>
                   <Col xs={24} md={12}>
-                    <Form.Item name="frameMaterial" label="Chất liệu khung" rules={[{ required: true }]}>
+                    <Form.Item name="frameMaterial" label="Chất liệu khung" rules={[{ required: !catalogOnly, whitespace: true }]}>
                       <Input />
                     </Form.Item>
                   </Col>
                   <Col xs={24} md={12}>
-                    <Form.Item name="wheelSize" label="Cỡ bánh" rules={[{ required: true }]}>
+                    <Form.Item name="wheelSize" label="Cỡ bánh" rules={[{ required: !catalogOnly, whitespace: true }]}>
                       <Input placeholder="Ví dụ: 29 inch" />
                     </Form.Item>
                   </Col>
                   <Col xs={24} md={12}>
-                    <Form.Item name="weight" label="Trọng lượng" rules={[{ required: true }]}>
+                    <Form.Item name="weight" label="Trọng lượng" rules={[{ required: !catalogOnly, whitespace: true }]}>
                       <Input placeholder="Ví dụ: 13.5 kg" />
                     </Form.Item>
                   </Col>
@@ -377,6 +439,15 @@ export const AdminProductFormPage = () => {
             </Card>
 
             <Card title="Biến thể, màu sắc và tồn kho" className="admin-form-card">
+              {catalogOnly ? (
+                <Alert
+                  type="info"
+                  showIcon
+                  message="Tồn kho chưa xác nhận"
+                  description="Sản phẩm chỉ trưng bày. Khi mở bán, hãy nhập tồn kho thực tế, màu và kích cỡ cho từng biến thể."
+                  style={{ marginBottom: 16 }}
+                />
+              ) : null}
               <Form.List name="variants">
                 {(fields, { add, remove }) => (
                   <Space direction="vertical" size="middle" className="full-width">
@@ -384,8 +455,8 @@ export const AdminProductFormPage = () => {
                       <Card key={field.key} size="small" title={`Biến thể ${index + 1}`}>
                         <Row gutter={12}>
                           <Col xs={24} md={6}>
-                            <Form.Item name={[field.name, 'color']} label="Màu" rules={[{ required: true }]}>
-                              <Input placeholder="Black" />
+                            <Form.Item name={[field.name, 'color']} label="Màu" rules={[{ required: !catalogOnly, whitespace: true }]}>
+                              <Input placeholder="Chưa cập nhật" />
                             </Form.Item>
                           </Col>
                           <Col xs={24} md={6}>
@@ -394,8 +465,8 @@ export const AdminProductFormPage = () => {
                             </Form.Item>
                           </Col>
                           <Col xs={24} md={6}>
-                            <Form.Item name={[field.name, 'size']} label="Size" rules={[{ required: true }]}>
-                              <Input placeholder="M / 17 inch / Standard" />
+                            <Form.Item name={[field.name, 'size']} label="Size" rules={[{ required: !catalogOnly, whitespace: true }]}>
+                              <Input placeholder="Chưa cập nhật" />
                             </Form.Item>
                           </Col>
                           <Col xs={24} md={6}>
@@ -404,8 +475,18 @@ export const AdminProductFormPage = () => {
                             </Form.Item>
                           </Col>
                           <Col xs={24} md={8}>
-                            <Form.Item name={[field.name, 'stock']} label="Tồn kho" rules={[{ required: true }]}>
-                              <InputNumber min={0} precision={0} className="full-width" />
+                            <Form.Item
+                              name={[field.name, 'stock']}
+                              label="Tồn kho"
+                              rules={catalogOnly ? [] : [{ required: true, type: 'integer', min: 0, message: 'Nhập tồn kho thực tế bằng số nguyên không âm.' }]}
+                            >
+                              <InputNumber
+                                min={0}
+                                precision={0}
+                                className="full-width"
+                                disabled={catalogOnly}
+                                placeholder={catalogOnly ? 'Chưa xác nhận' : 'Nhập tồn kho thực tế'}
+                              />
                             </Form.Item>
                           </Col>
                           <Col xs={24} md={8}>
@@ -423,7 +504,7 @@ export const AdminProductFormPage = () => {
                               danger
                               type="text"
                               icon={<DeleteOutlined />}
-                              disabled={fields.length === 1}
+                              disabled={isSaving || (!catalogOnly && fields.length === 1)}
                               onClick={() => remove(field.name)}
                             />
                           </Col>
@@ -434,7 +515,7 @@ export const AdminProductFormPage = () => {
                       type="dashed"
                       icon={<PlusOutlined />}
                       onClick={() =>
-                        add({ color: 'Black', colorHex: '#111111', size: 'M', stock: 0, priceAdjustment: 0 })
+                        add({ color: '', size: '', stock: undefined, priceAdjustment: 0 })
                       }
                     >
                       Thêm biến thể
@@ -447,17 +528,25 @@ export const AdminProductFormPage = () => {
 
           <Col xs={24} xl={8}>
             <Card title="Giá và trạng thái">
+              <Form.Item name="catalogOnly" label="Chỉ trưng bày (chưa mở bán)" valuePropName="checked">
+                <Switch />
+              </Form.Item>
+              {catalogOnly ? (
+                <Typography.Paragraph type="secondary">
+                  Khách có thể xem sản phẩm và liên hệ tư vấn. Giá hiển thị là giá tham khảo.
+                </Typography.Paragraph>
+              ) : null}
               <Form.Item name="originalPrice" label="Giá gốc (VND)" rules={[{ required: true }]}>
                 <InputNumber min={0} precision={0} className="full-width" />
               </Form.Item>
-              <Form.Item name="salePrice" label="Giá bán (VND)" rules={[{ required: true }]}>
+              <Form.Item name="salePrice" label={catalogOnly ? 'Giá tham khảo (VND)' : 'Giá bán (VND)'} rules={[{ required: true }]}>
                 <InputNumber min={0} precision={0} className="full-width" />
               </Form.Item>
               <Form.Item name="status" label="Trạng thái" rules={[{ required: true }]}>
                 <Select
                   options={Object.values(ProductStatus).map((status) => ({
                     value: status,
-                    label: productStatusLabels[status],
+                    label: catalogOnly && status === ProductStatus.ACTIVE ? 'Đang trưng bày' : productStatusLabels[status],
                   }))}
                 />
               </Form.Item>
@@ -488,7 +577,7 @@ export const AdminProductFormPage = () => {
                           danger
                           type="text"
                           icon={<DeleteOutlined />}
-                          disabled={fields.length === 1}
+                          disabled={isSaving || fields.length === 1}
                           onClick={() => remove(field.name)}
                         >
                           Xóa ảnh
@@ -513,6 +602,7 @@ export const AdminProductFormPage = () => {
           </Space>
         </div>
       </Form>
+      )}
     </section>
   );
 };

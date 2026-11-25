@@ -1,5 +1,7 @@
 import { EyeOutlined, SearchOutlined } from '@ant-design/icons';
 import {
+  Alert,
+  Button,
   DatePicker,
   Input,
   Pagination,
@@ -8,16 +10,17 @@ import {
   Table,
   Tag,
   Typography,
-  message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useCallback, useEffect, useState } from 'react';
+import type { RangePickerProps } from 'antd/es/date-picker';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { adminOrderService } from '../../api/services/admin-order.service';
 import type { AdminOrderQuery } from '../../types/admin';
 import {
   OrderStatus,
   PaymentStatus,
+  getOrderPaymentLabel,
   orderStatusLabels,
   paymentStatusLabels,
 } from '../../types/order';
@@ -39,6 +42,7 @@ const paymentStatusColor: Record<PaymentStatus, string> = {
   [PaymentStatus.PAID]: 'green',
   [PaymentStatus.FAILED]: 'red',
   [PaymentStatus.REFUNDED]: 'purple',
+  [PaymentStatus.REFUND_PENDING]: 'orange',
 };
 
 const formatDateTime = (value: string): string =>
@@ -56,29 +60,37 @@ export const AdminOrdersPage = () => {
   const [orderStatus, setOrderStatus] = useState<OrderStatus>();
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>();
   const [dateRange, setDateRange] = useState<[string, string] | null>(null);
-
-  const loadOrders = useCallback(async (): Promise<void> => {
-    setIsLoading(true);
-    try {
-      const query: AdminOrderQuery = {
-        page,
-        limit: 10,
-        ...(keyword ? { keyword } : {}),
-        ...(orderStatus ? { orderStatus } : {}),
-        ...(paymentStatus ? { paymentStatus } : {}),
-        ...(dateRange ? { startDate: dateRange[0], endDate: dateRange[1] } : {}),
-      };
-      setResult(await adminOrderService.getList(query));
-    } catch (error) {
-      message.error(getErrorMessage(error));
-    } finally {
-      setIsLoading(false);
-    }
-  }, [page, keyword, orderStatus, paymentStatus, dateRange]);
+  const [dateRangeValue, setDateRangeValue] = useState<RangePickerProps['value']>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    const controller = new AbortController();
+    const loadOrders = async (): Promise<void> => {
+      setIsLoading(true);
+      setErrorMessage(null);
+      setResult(null);
+      try {
+        const query: AdminOrderQuery = {
+          page,
+          limit: 10,
+          ...(keyword ? { keyword } : {}),
+          ...(orderStatus ? { orderStatus } : {}),
+          ...(paymentStatus ? { paymentStatus } : {}),
+          ...(dateRange ? { startDate: dateRange[0], endDate: dateRange[1] } : {}),
+        };
+        const nextResult = await adminOrderService.getList(query, controller.signal);
+        if (!controller.signal.aborted) setResult(nextResult);
+      } catch (error) {
+        if (!controller.signal.aborted) setErrorMessage(getErrorMessage(error));
+      } finally {
+        if (!controller.signal.aborted) setIsLoading(false);
+      }
+    };
+
     void loadOrders();
-  }, [loadOrders]);
+    return () => controller.abort();
+  }, [page, keyword, orderStatus, paymentStatus, dateRange, reloadKey]);
 
   const columns: ColumnsType<Order> = [
     {
@@ -112,7 +124,7 @@ export const AdminOrdersPage = () => {
       key: 'payment',
       render: (_, order) => (
         <Space direction="vertical" size={2}>
-          <Typography.Text>{order.paymentMethod}</Typography.Text>
+          <Typography.Text>{getOrderPaymentLabel(order)}</Typography.Text>
           <Tag color={paymentStatusColor[order.paymentStatus]}>
             {paymentStatusLabels[order.paymentStatus]}
           </Tag>
@@ -139,7 +151,7 @@ export const AdminOrdersPage = () => {
       fixed: 'right',
       render: (_, order) => (
         <Link to={`/admin/orders/${order.id}`}>
-          <Typography.Link><EyeOutlined /> Chi tiết</Typography.Link>
+          <EyeOutlined /> Chi tiết
         </Link>
       ),
     },
@@ -202,7 +214,9 @@ export const AdminOrdersPage = () => {
         />
         <DatePicker.RangePicker
           className="admin-order-date-range"
+          value={dateRangeValue}
           onChange={(dates) => {
+            setDateRangeValue(dates);
             setDateRange(
               dates?.[0] && dates[1]
                 ? [dates[0].startOf('day').toISOString(), dates[1].endOf('day').toISOString()]
@@ -211,16 +225,40 @@ export const AdminOrdersPage = () => {
             setPage(1);
           }}
         />
+        <Button
+          disabled={!searchInput && !keyword && !orderStatus && !paymentStatus && !dateRangeValue}
+          onClick={() => {
+            setSearchInput('');
+            setKeyword(undefined);
+            setOrderStatus(undefined);
+            setPaymentStatus(undefined);
+            setDateRange(null);
+            setDateRangeValue(null);
+            setPage(1);
+          }}
+        >
+          Xóa bộ lọc
+        </Button>
       </Space>
 
-      <Table
-        rowKey="id"
-        loading={isLoading}
-        columns={columns}
-        dataSource={orders}
-        pagination={false}
-        scroll={{ x: 1120 }}
-      />
+      {errorMessage ? (
+        <Alert
+          type="error"
+          showIcon
+          message="Không thể tải đơn hàng"
+          description={errorMessage}
+          action={<Button onClick={() => setReloadKey((value) => value + 1)}>Thử lại</Button>}
+        />
+      ) : (
+        <Table
+          rowKey="id"
+          loading={isLoading}
+          columns={columns}
+          dataSource={orders}
+          pagination={false}
+          scroll={{ x: 1120 }}
+        />
+      )}
       {meta && (meta.totalPages ?? 1) > 1 ? (
         <Pagination
           className="admin-table-pagination"

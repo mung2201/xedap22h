@@ -1,5 +1,5 @@
-import { AutoComplete, Empty, Input, Spin, Typography } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { AutoComplete, Empty, Input, Spin, Typography, type InputRef } from 'antd';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { productService } from '../../api/services/product.service';
 import type { Product } from '../../types/catalog';
@@ -12,10 +12,20 @@ const SEARCH_SUGGESTION_LIMIT = 6;
 export const GlobalProductSearch = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const inputRef = useRef<InputRef>(null);
   const [keyword, setKeyword] = useState('');
-  const [suggestions, setSuggestions] = useState<Product[]>([]);
-  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+  const [suggestionResult, setSuggestionResult] = useState<{
+    keyword: string;
+    products: Product[];
+    hasError: boolean;
+  } | null>(null);
   const [isFocused, setIsFocused] = useState(false);
+  const normalizedKeyword = keyword.trim();
+  const canShowSuggestions = isFocused && normalizedKeyword.length >= 2;
+  const currentSuggestions = suggestionResult?.keyword === normalizedKeyword
+    ? suggestionResult
+    : null;
+  const isLoadingSuggestions = canShowSuggestions && !currentSuggestions;
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -23,47 +33,35 @@ export const GlobalProductSearch = () => {
   }, [location.pathname, location.search]);
 
   useEffect(() => {
-    const normalizedKeyword = keyword.trim();
-
-    if (normalizedKeyword.length < 2) {
-      setSuggestions([]);
-      setIsLoadingSuggestions(false);
+    if (!canShowSuggestions) {
       return;
     }
 
-    let isMounted = true;
+    const controller = new AbortController();
     const timeoutId = window.setTimeout(() => {
-      setIsLoadingSuggestions(true);
-
       void productService
         .getPublicList({
           keyword: normalizedKeyword,
-          inStock: true,
           limit: SEARCH_SUGGESTION_LIMIT,
           sort: ProductSort.BEST_SELLING,
-        })
+        }, controller.signal)
         .then((result) => {
-          if (isMounted) {
-            setSuggestions(result.items);
+          if (!controller.signal.aborted) {
+            setSuggestionResult({ keyword: normalizedKeyword, products: result.items, hasError: false });
           }
         })
         .catch(() => {
-          if (isMounted) {
-            setSuggestions([]);
-          }
-        })
-        .finally(() => {
-          if (isMounted) {
-            setIsLoadingSuggestions(false);
+          if (!controller.signal.aborted) {
+            setSuggestionResult({ keyword: normalizedKeyword, products: [], hasError: true });
           }
         });
     }, SEARCH_DELAY_MS);
 
     return () => {
-      isMounted = false;
+      controller.abort();
       window.clearTimeout(timeoutId);
     };
-  }, [keyword]);
+  }, [canShowSuggestions, normalizedKeyword]);
 
   const search = (value: string): void => {
     const normalizedValue = value.trim();
@@ -74,7 +72,8 @@ export const GlobalProductSearch = () => {
     }
 
     setIsFocused(false);
-    setSuggestions([]);
+    inputRef.current?.blur();
+    setSuggestionResult(null);
 
     const searchParams = params.toString();
     navigate({
@@ -85,11 +84,15 @@ export const GlobalProductSearch = () => {
 
   const options = useMemo(
     () =>
-      suggestions.map((product) => ({
+      (currentSuggestions?.products ?? []).map((product) => ({
         value: product.slug,
         label: (
           <div className="global-search-suggestion">
-            <img src={product.thumbnail} alt="" />
+            <img src={product.thumbnail} alt="" onError={(event) => {
+              if (!event.currentTarget.src.endsWith('/images/product-placeholder.svg')) {
+                event.currentTarget.src = '/images/product-placeholder.svg';
+              }
+            }} />
             <div className="global-search-suggestion-copy">
               <Typography.Text strong ellipsis>
                 {product.name}
@@ -100,14 +103,13 @@ export const GlobalProductSearch = () => {
             </div>
             <Typography.Text className="global-search-suggestion-price">
               {formatCurrency(product.salePrice)}
+              {product.catalogOnly ? <><br /><Typography.Text type="secondary">Giá tham khảo</Typography.Text></> : null}
             </Typography.Text>
           </div>
         ),
       })),
-    [suggestions],
+    [currentSuggestions],
   );
-
-  const canShowSuggestions = isFocused && keyword.trim().length >= 2;
 
   return (
     <AutoComplete
@@ -124,25 +126,31 @@ export const GlobalProductSearch = () => {
           <Empty
             className="global-search-suggestion-empty"
             image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description="Không có sản phẩm phù hợp"
+            description={currentSuggestions?.hasError
+              ? 'Chưa tải được gợi ý. Nhấn Enter để tìm kiếm.'
+              : 'Không có sản phẩm phù hợp'}
           />
         )
       }
       onChange={(value) => setKeyword(value)}
       onFocus={() => setIsFocused(true)}
-      onBlur={() => {
-        window.setTimeout(() => setIsFocused(false), 120);
-      }}
+      onBlur={() => setIsFocused(false)}
       onSelect={(slug) => {
         setIsFocused(false);
+        inputRef.current?.blur();
         navigate(`/products/${slug}`);
       }}
     >
       <Input.Search
+        ref={inputRef}
         allowClear
         placeholder="Tìm xe đạp, phụ kiện..."
         onSearch={search}
-        onChange={(event) => setKeyword(event.target.value)}
+        onClick={() => setIsFocused(true)}
+        onChange={(event) => {
+          setKeyword(event.target.value);
+          setIsFocused(true);
+        }}
       />
     </AutoComplete>
   );

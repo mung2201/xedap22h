@@ -19,7 +19,7 @@ import {
   Typography,
   message,
 } from 'antd';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { sizeGuideService } from '../api/services/size-guide.service';
 import { BikeType, bikeTypeLabels } from '../types/catalog';
 import type { SizeRecommendation } from '../types/size-guide';
@@ -37,31 +37,45 @@ export const SizeGuidePage = () => {
   const [recommendation, setRecommendation] = useState<SizeRecommendation | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const submitting = useRef(false);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const submit = async (values: SizeGuideFormValues): Promise<void> => {
+    if (submitting.current) return;
+    submitting.current = true;
     setIsLoading(true);
+    setRecommendation(null);
     setErrorMessage(null);
     try {
       const result = await sizeGuideService.recommend(values);
-      setRecommendation(result);
+      if (mounted.current) setRecommendation(result);
     } catch (error) {
-      setRecommendation(null);
-      const nextErrorMessage = getErrorMessage(error);
-      setErrorMessage(nextErrorMessage);
-      message.error(nextErrorMessage);
+      if (mounted.current) {
+        const nextErrorMessage = getErrorMessage(error);
+        setErrorMessage(nextErrorMessage);
+        message.error(nextErrorMessage);
+      }
     } finally {
-      setIsLoading(false);
+      submitting.current = false;
+      if (mounted.current) setIsLoading(false);
     }
   };
 
   return (
     <main className="page-container size-guide-page">
       <section className="size-guide-heading">
-        <Tag color="cyan">BIKE FIT</Tag>
+        <Tag color="blue">CHỌN SIZE XE</Tag>
         <Typography.Title level={1}>Hướng dẫn chọn size xe đạp</Typography.Title>
         <Typography.Paragraph>
-          Nhập chiều cao và loại xe. Kết quả được tính từ rule Size Guide do cửa hàng quản lý,
-          không dùng bảng size cố định trong giao diện.
+          Nhập chiều cao và loại xe để tìm kích cỡ khung phù hợp, giúp bạn bắt đầu
+          mỗi hành trình thoải mái hơn.
         </Typography.Paragraph>
       </section>
 
@@ -73,6 +87,11 @@ export const SizeGuidePage = () => {
               layout="vertical"
               initialValues={{ bikeType: BikeType.MOUNTAIN }}
               onFinish={submit}
+              disabled={isLoading}
+              onValuesChange={() => {
+                setRecommendation(null);
+                setErrorMessage(null);
+              }}
             >
               <Form.Item
                 name="heightCm"
@@ -128,7 +147,7 @@ export const SizeGuidePage = () => {
                   <Descriptions.Item label="Chiều cao đã nhập">
                     {recommendation.heightCm} cm
                   </Descriptions.Item>
-                  <Descriptions.Item label="Khoảng chiều cao của rule">
+                  <Descriptions.Item label="Chiều cao phù hợp">
                     {recommendation.heightRange.minHeightCm}–{recommendation.heightRange.maxHeightCm} cm
                   </Descriptions.Item>
                 </Descriptions>

@@ -1,13 +1,16 @@
 import {
   ArrowLeftOutlined,
   CheckCircleOutlined,
+  CloseCircleOutlined,
   CreditCardOutlined,
   HeartFilled,
   HeartOutlined,
+  RightOutlined,
   SafetyCertificateOutlined,
   ShoppingCartOutlined,
   StarOutlined,
   SwapOutlined,
+  ToolOutlined,
   TruckOutlined,
 } from '@ant-design/icons';
 import {
@@ -17,7 +20,6 @@ import {
   Card,
   Col,
   Descriptions,
-  Divider,
   Empty,
   Form,
   Image,
@@ -35,8 +37,8 @@ import {
   Typography,
   message,
 } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { cartService } from '../../api/services/cart.service';
 import { productService } from '../../api/services/product.service';
 import { reviewService } from '../../api/services/review.service';
@@ -56,6 +58,7 @@ import type {
 import { formatCurrency } from '../../utils/currency';
 import { getErrorMessage } from '../../utils/error-message';
 import { rememberRecentlyViewedProduct } from '../../utils/recently-viewed-products';
+import '../../styles/product-detail.css';
 
 const getFirstAvailableVariant = (
   variants: ProductVariant[],
@@ -77,6 +80,8 @@ export const ProductDetailPage = () => {
   const { slug = '' } = useParams();
   const user = useAuthStore((state) => state.user);
   const navigate = useNavigate();
+  const location = useLocation();
+  const cartMutationPending = useRef(false);
   const setCart = useCommerceStore((state) => state.setCart);
   const setWishlist = useCommerceStore((state) => state.setWishlist);
   const addToCompare = useCompareStore((state) => state.add);
@@ -87,6 +92,7 @@ export const ProductDetailPage = () => {
   const [activeImage, setActiveImage] = useState<string>('');
   const [selectedColor, setSelectedColor] = useState<string>('');
   const [selectedSize, setSelectedSize] = useState<string>('');
+  const [selectedVariantId, setSelectedVariantId] = useState<string>('');
   const [quantity, setQuantity] = useState<number>(1);
   const [isAddingToCart, setIsAddingToCart] = useState(false);
   const [isBuyingNow, setIsBuyingNow] = useState(false);
@@ -126,6 +132,7 @@ export const ProductDetailPage = () => {
         setActiveImage(firstVariant?.imageUrl ?? loadedProduct.thumbnail);
         setSelectedColor(firstVariant?.color ?? '');
         setSelectedSize(firstVariant?.size ?? '');
+        setSelectedVariantId(firstVariant?.id ?? '');
         setQuantity(1);
         setReviewPage(1);
         setReviewResult(null);
@@ -285,13 +292,12 @@ export const ProductDetailPage = () => {
   );
 
   const selectedVariant = useMemo<ProductVariant | undefined>(
-    () =>
-      product?.variants.find(
-        (variant) =>
-          variant.color === selectedColor && variant.size === selectedSize,
-      ),
-    [product, selectedColor, selectedSize],
+    () => product?.variants.find((variant) => variant.id === selectedVariantId),
+    [product, selectedVariantId],
   );
+  const maxQuantity = product?.catalogOnly ? 0 : Math.min(99, selectedVariant?.stock ?? 0);
+  const isQuantityValid = Number.isInteger(quantity) && quantity >= 1 && quantity <= maxQuantity;
+  const isCartMutationPending = isAddingToCart || isBuyingNow;
 
   const selectColor = (color: string): void => {
     if (!product) {
@@ -303,6 +309,7 @@ export const ProductDetailPage = () => {
     );
     setSelectedColor(color);
     setSelectedSize(nextVariant?.size ?? '');
+    setSelectedVariantId(nextVariant?.id ?? '');
     setQuantity(1);
 
     if (nextVariant?.imageUrl) {
@@ -311,6 +318,8 @@ export const ProductDetailPage = () => {
   };
 
   const selectSize = (variant: ProductVariant): void => {
+    setSelectedVariantId(variant.id);
+    setSelectedColor(variant.color);
     setSelectedSize(variant.size);
     setQuantity(1);
 
@@ -325,15 +334,19 @@ export const ProductDetailPage = () => {
     }
 
     message.info('Vui lòng đăng nhập để tiếp tục.');
-    navigate('/login');
+    navigate('/login', {
+      state: { from: `${location.pathname}${location.search}${location.hash}` },
+    });
     return false;
   };
 
   const addToCart = async (): Promise<void> => {
+    if (cartMutationPending.current || product?.catalogOnly || !isQuantityValid) return;
     if (!requireAuthentication() || !product || !selectedVariant) {
       return;
     }
 
+    cartMutationPending.current = true;
     setIsAddingToCart(true);
 
     try {
@@ -347,15 +360,18 @@ export const ProductDetailPage = () => {
     } catch (error) {
       message.error(getErrorMessage(error));
     } finally {
+      cartMutationPending.current = false;
       setIsAddingToCart(false);
     }
   };
 
   const buyNow = async (): Promise<void> => {
+    if (cartMutationPending.current || product?.catalogOnly || !isQuantityValid) return;
     if (!requireAuthentication() || !product || !selectedVariant) {
       return;
     }
 
+    cartMutationPending.current = true;
     setIsBuyingNow(true);
 
     try {
@@ -370,6 +386,7 @@ export const ProductDetailPage = () => {
     } catch (error) {
       message.error(getErrorMessage(error));
     } finally {
+      cartMutationPending.current = false;
       setIsBuyingNow(false);
     }
   };
@@ -521,94 +538,147 @@ export const ProductDetailPage = () => {
 
   const displayPrice = selectedVariant?.price ?? product.salePrice;
   const variantOutOfStock = !selectedVariant || selectedVariant.stock <= 0;
+  const quickSpecifications = [
+    { label: 'Khung xe', value: product.frameMaterial },
+    { label: 'Cỡ bánh', value: product.wheelSize },
+    { label: 'Trọng lượng', value: product.weight },
+  ].filter((specification) => specification.value);
 
   return (
     <main className="product-detail-page page-container">
-      <Link to="/products" className="back-link">
-        <ArrowLeftOutlined /> Quay lại sản phẩm
-      </Link>
+      <nav className="product-detail-breadcrumb" aria-label="Điều hướng sản phẩm">
+        <Link to="/products"><ArrowLeftOutlined /> Tất cả sản phẩm</Link>
+        <RightOutlined aria-hidden />
+        <span>{product.category.name ?? 'Sản phẩm'}</span>
+      </nav>
 
-      <Row gutter={[40, 32]} className="product-detail-main">
-        <Col xs={24} lg={12}>
-          <Card className="product-gallery-card">
-            <Image
-              src={activeImage || product.thumbnail}
-              alt={product.name}
-              className="product-detail-main-image"
-              preview
-            />
+      <Row gutter={[{ xs: 16, sm: 32 }, 24]} className="product-detail-main">
+        <Col xs={24} lg={13}>
+          <div className="product-detail-gallery">
+            <div className="product-gallery-stage">
+              <div className="product-gallery-labels">
+                {product.brand.name ? <span>{product.brand.name}</span> : null}
+                {product.bikeType ? <span>{bikeTypeLabels[product.bikeType]}</span> : null}
+              </div>
+              <Image
+                src={activeImage || product.thumbnail}
+                alt={product.name}
+                className="product-detail-main-image"
+                fallback="/images/product-placeholder.svg"
+                preview
+              />
+              <span className="product-gallery-hint">Chạm vào ảnh để xem chi tiết</span>
+            </div>
             <div className="product-thumbnail-list" aria-label="Album ảnh sản phẩm">
-              {galleryImages.map((image) => (
+              {galleryImages.map((image, index) => (
                 <button
                   key={image.url}
                   type="button"
                   className={`product-thumbnail-button ${
                     activeImage === image.url ? 'is-active' : ''
                   }`}
+                  aria-label={`Xem ảnh ${index + 1} của ${product.name}`}
+                  aria-pressed={activeImage === image.url}
                   onClick={() => setActiveImage(image.url)}
                 >
-                  <img src={image.url} alt={image.alt ?? product.name} />
+                  <img
+                    src={image.url}
+                    alt={image.alt ?? product.name}
+                    loading="lazy"
+                    onError={(event) => {
+                      if (!event.currentTarget.src.endsWith('/images/product-placeholder.svg')) {
+                        event.currentTarget.src = '/images/product-placeholder.svg';
+                      }
+                    }}
+                  />
                 </button>
               ))}
             </div>
-          </Card>
+            {quickSpecifications.length ? (
+              <dl className="product-quick-specs">
+                {quickSpecifications.map((specification) => (
+                  <div key={specification.label}>
+                    <dt>{specification.label}</dt>
+                    <dd>{specification.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            ) : null}
+          </div>
         </Col>
 
-        <Col xs={24} lg={12}>
-          <Space direction="vertical" size="middle" className="full-width">
-            <Space wrap>
-              <Tag color="cyan">{product.category.name ?? 'Danh mục'}</Tag>
-              {product.bikeType ? <Tag>{bikeTypeLabels[product.bikeType]}</Tag> : null}
-              {product.availableStock > 0 ? (
-                <Tag color="green">Còn hàng</Tag>
-              ) : (
-                <Tag color="red">Hết hàng</Tag>
-              )}
-            </Space>
+        <Col xs={24} lg={11}>
+          <section className="product-purchase-panel" aria-label="Chọn và mua sản phẩm">
+            <div className="product-detail-meta">
+              <span className="product-detail-category">{product.category.name ?? 'Sản phẩm'}</span>
+              <span className="product-detail-sku">Mã: {product.sku}</span>
+            </div>
             <Typography.Title level={1} className="product-detail-title">
               {product.name}
             </Typography.Title>
-            <Typography.Text type="secondary">SKU gốc: {product.sku}</Typography.Text>
-            <Space wrap>
+            <a href="#product-reviews" className="product-rating-link">
               <Rate disabled allowHalf value={product.averageRating} />
-              <Typography.Text type="secondary">
+              <span>
                 {product.reviewCount > 0
                   ? `${product.averageRating.toFixed(1)} (${product.reviewCount} đánh giá)`
                   : 'Chưa có đánh giá'}
-              </Typography.Text>
-            </Space>
-            <Space align="baseline" wrap>
-              <Typography.Title level={2} className="product-detail-price">
-                {formatCurrency(displayPrice)}
-              </Typography.Title>
-              {product.isOnSale ? (
-                <>
-                  <Typography.Text delete type="secondary">
-                    {formatCurrency(product.originalPrice)}
-                  </Typography.Text>
-                  <Tag color="red">Giảm {product.discountPercent}%</Tag>
-                </>
-              ) : null}
-            </Space>
-            <Typography.Paragraph>{product.shortDescription}</Typography.Paragraph>
-
-            <div className="product-purchase-summary">
-              <Typography.Text type="secondary">
-                Tạm tính {quantity} sản phẩm
-              </Typography.Text>
-              <Typography.Text strong>{formatCurrency(displayPrice * quantity)}</Typography.Text>
-              <Typography.Text type="secondary" className="product-purchase-summary-note">
-                Giá, tồn kho, voucher và phí giao hàng luôn được hệ thống xác nhận lại ở bước thanh toán.
-              </Typography.Text>
+              </span>
+            </a>
+            <div className="product-detail-price-box">
+              <span className="product-detail-price-label">{product.catalogOnly ? 'Giá tham khảo' : 'Giá sản phẩm'}</span>
+              <Space align="baseline" wrap>
+                <Typography.Title level={2} className="product-detail-price">
+                  {formatCurrency(displayPrice)}
+                </Typography.Title>
+                {!product.catalogOnly && product.isOnSale ? (
+                  <>
+                    <Typography.Text delete type="secondary">
+                      {formatCurrency(product.originalPrice)}
+                    </Typography.Text>
+                    <Tag className="product-detail-discount">Giảm {product.discountPercent}%</Tag>
+                  </>
+                ) : null}
+              </Space>
             </div>
+            <Typography.Paragraph className="product-detail-intro">
+              {product.shortDescription}
+            </Typography.Paragraph>
 
+            {product.catalogOnly ? (
+              <div className="variant-picker">
+                <Alert
+                  type="info"
+                  showIcon
+                  message="Sản phẩm đang trưng bày"
+                  description="Giá mang tính tham khảo. Vui lòng liên hệ để xác nhận giá và tình trạng hàng trước khi mua."
+                />
+                {product.variants.length ? (
+                  <Form.Item label="Phiên bản tham khảo" style={{ marginTop: 16, marginBottom: 0 }}>
+                    <Select
+                      aria-label="Phiên bản tham khảo"
+                      className="full-width"
+                      value={selectedVariantId || undefined}
+                      onChange={(id) => {
+                        const variant = product.variants.find((item) => item.id === id);
+                        if (variant) selectSize(variant);
+                      }}
+                      options={product.variants.map((variant, index) => ({
+                        value: variant.id,
+                        label: `${index + 1}. ${variant.color || 'Màu chưa cập nhật'} / ${variant.size || 'Cỡ chưa cập nhật'} · ${formatCurrency(variant.price)}`,
+                      }))}
+                    />
+                  </Form.Item>
+                ) : null}
+              </div>
+            ) : <>
             <div className="variant-picker">
-              <Typography.Text strong>Màu sắc</Typography.Text>
+              <Typography.Text strong>Màu sắc <span>{selectedColor}</span></Typography.Text>
               <Space wrap>
                 {colorOptions.map((variant) => (
                   <Button
                     key={variant.color}
                     type={selectedColor === variant.color ? 'primary' : 'default'}
+                    aria-pressed={selectedColor === variant.color}
                     onClick={() => selectColor(variant.color)}
                   >
                     {variant.colorHex ? (
@@ -624,12 +694,18 @@ export const ProductDetailPage = () => {
             </div>
 
             <div className="variant-picker">
-              <Typography.Text strong>Kích cỡ</Typography.Text>
+              <div className="product-size-heading">
+                <Typography.Text strong>Kích cỡ <span>{selectedSize}</span></Typography.Text>
+                {product.productType === ProductType.BICYCLE ? (
+                  <Link to="/size-guide">Hướng dẫn chọn size <RightOutlined /></Link>
+                ) : null}
+              </div>
               <Space wrap>
                 {sizesForColor.map((variant) => (
                   <Button
                     key={variant.id}
-                    type={selectedSize === variant.size ? 'primary' : 'default'}
+                    type={selectedVariantId === variant.id ? 'primary' : 'default'}
+                    aria-pressed={selectedVariantId === variant.id}
                     disabled={variant.stock <= 0}
                     onClick={() => selectSize(variant)}
                   >
@@ -637,45 +713,64 @@ export const ProductDetailPage = () => {
                   </Button>
                 ))}
               </Space>
-              <Typography.Text type={variantOutOfStock ? 'danger' : 'secondary'}>
+              <Typography.Text className={`product-variant-stock ${variantOutOfStock ? 'is-unavailable' : ''}`}>
+                {variantOutOfStock ? <CloseCircleOutlined /> : <CheckCircleOutlined />}
                 {selectedVariant
                   ? variantOutOfStock
                     ? `Biến thể ${selectedVariant.color} / ${selectedVariant.size} đã hết hàng`
-                    : `Còn ${selectedVariant.stock} sản phẩm · SKU ${selectedVariant.sku}`
+                    : `Còn ${selectedVariant.stock} sản phẩm cho lựa chọn của bạn`
                   : 'Vui lòng chọn màu và kích cỡ'}
               </Typography.Text>
             </div>
+            </>}
 
-            <Space wrap>
+            {!product.catalogOnly ? <>
+            <div className="product-purchase-quantity">
+              <label htmlFor="product-quantity">Số lượng</label>
               <InputNumber
+                id="product-quantity"
                 min={1}
-                max={Math.max(1, selectedVariant?.stock ?? 1)}
+                max={Math.max(1, maxQuantity)}
                 precision={0}
                 value={quantity}
-                disabled={variantOutOfStock}
+                disabled={variantOutOfStock || isCartMutationPending}
                 onChange={(value) => setQuantity(value ?? 1)}
                 aria-label="Số lượng sản phẩm"
               />
+              <div className="product-purchase-total">
+                <span>Tạm tính</span>
+                <strong>{formatCurrency(displayPrice * quantity)}</strong>
+              </div>
+            </div>
+            <div className="product-purchase-actions">
               <Button
-                type="primary"
                 size="large"
+                className="product-add-cart-button"
                 icon={<ShoppingCartOutlined />}
                 loading={isAddingToCart}
-                disabled={variantOutOfStock}
+                disabled={!isQuantityValid || isCartMutationPending}
                 onClick={() => void addToCart()}
               >
-                Thêm vào giỏ hàng
+                Thêm vào giỏ
               </Button>
               <Button
+                type="primary"
                 size="large"
                 className="product-buy-now-button"
                 icon={<CreditCardOutlined />}
                 loading={isBuyingNow}
-                disabled={variantOutOfStock}
+                disabled={!isQuantityValid || isCartMutationPending}
                 onClick={() => void buyNow()}
               >
                 Mua ngay
               </Button>
+            </div>
+            </> : (
+              <Link to="/pages/contact">
+                <Button type="primary" size="large" block>Liên hệ tư vấn</Button>
+              </Link>
+            )}
+            <div className="product-purchase-secondary">
               <Button
                 size="large"
                 icon={isWishlisted ? <HeartFilled /> : <HeartOutlined />}
@@ -689,45 +784,44 @@ export const ProductDetailPage = () => {
                   So sánh xe
                 </Button>
               ) : null}
-            </Space>
-
-            <div className="product-purchase-assurances">
-              <div>
-                <TruckOutlined />
-                <span>
-                  <strong>Giao hàng minh bạch</strong>
-                  Phí ship và thời gian giao được hiển thị trước khi xác nhận đơn.
-                </span>
-              </div>
-              <div>
-                <CreditCardOutlined />
-                <span>
-                  <strong>Thanh toán linh hoạt</strong>
-                  Hỗ trợ COD và thanh toán trực tuyến theo cấu hình checkout.
-                </span>
-              </div>
-              <div>
-                <SafetyCertificateOutlined />
-                <span>
-                  <strong>Hỗ trợ sau mua</strong>
-                  Xem chính sách bảo hành hoặc đặt lịch chăm sóc xe khi cần.
-                </span>
-              </div>
             </div>
-          </Space>
+            <p className="product-purchase-note">
+              {product.catalogOnly
+                ? 'Tồn kho đang chờ xác nhận. Bạn vẫn có thể lưu yêu thích và xem thông tin sản phẩm.'
+                : 'Phí giao hàng và ưu đãi được cập nhật ở bước thanh toán.'}
+            </p>
+          </section>
         </Col>
       </Row>
 
-      <Divider />
-      <Row gutter={[32, 24]}>
+      <div className="product-detail-support">
+        <Link to="/size-guide">
+          <CheckCircleOutlined />
+          <span><strong>Chọn xe vừa vặn</strong>Tham khảo hướng dẫn chọn size</span>
+          <RightOutlined />
+        </Link>
+        <Link to="/pages/warranty-policy">
+          <SafetyCertificateOutlined />
+          <span><strong>An tâm sau mua</strong>Tìm hiểu chính sách bảo hành</span>
+          <RightOutlined />
+        </Link>
+        <Link to="/service-booking">
+          <ToolOutlined />
+          <span><strong>Chăm sóc chiếc xe của bạn</strong>Đặt lịch dịch vụ cùng XeDap22h</span>
+          <RightOutlined />
+        </Link>
+      </div>
+
+      <Row gutter={[{ xs: 16, sm: 32 }, 24]} className="product-detail-content">
         <Col xs={24} lg={14}>
+          <span className="product-section-eyebrow">Khám phá sản phẩm</span>
           <Typography.Title level={3}>Mô tả sản phẩm</Typography.Title>
           <Typography.Paragraph className="product-description">
             {product.description}
           </Typography.Paragraph>
         </Col>
         <Col xs={24} lg={10}>
-          <Card title="Thông số kỹ thuật">
+          <Card title="Thông số kỹ thuật" className="product-specifications-card">
             <Descriptions column={1} size="small">
               {product.frameMaterial ? (
                 <Descriptions.Item label="Khung xe">
@@ -755,26 +849,19 @@ export const ProductDetailPage = () => {
         </Col>
       </Row>
 
-      <section className="product-detail-benefit">
-        <CheckCircleOutlined /> Tồn kho được xác định theo đúng màu và kích cỡ bạn đã chọn.
-      </section>
-
       <section className="product-order-information">
         <Row gutter={[24, 24]}>
           <Col xs={24} md={12}>
             <Card title={<><TruckOutlined /> Giao hàng & nhận xe</>}>
               <Typography.Paragraph>
-                Sau khi chọn màu, kích cỡ và số lượng, bạn có thể thêm vào giỏ hoặc chọn <strong>Mua ngay</strong> để đi thẳng tới checkout. Tại đó bạn chọn địa chỉ, phương thức giao hàng và kiểm tra lại đơn trước khi đặt.
-              </Typography.Paragraph>
-              <Typography.Paragraph>
-                Với xe đạp, cửa hàng có thể liên hệ để xác nhận size, thời gian giao và nhu cầu lắp ráp trước khi xử lý đơn.
+                Chọn địa chỉ và phương thức giao hàng ở bước thanh toán. Bạn có thể kiểm tra phí giao hàng, sản phẩm và số lượng trước khi xác nhận đơn.
               </Typography.Paragraph>
             </Card>
           </Col>
           <Col xs={24} md={12}>
-            <Card title={<><CreditCardOutlined /> Thanh toán an toàn</>}>
+            <Card title={<><CreditCardOutlined /> Thanh toán & hỗ trợ</>}>
               <Typography.Paragraph>
-                Hệ thống hỗ trợ COD và thanh toán trực tuyến. Tổng tiền cuối cùng được backend tính từ giá hiện tại, biến thể, voucher và phí giao hàng — không lấy giá từ trình duyệt.
+                Chọn phương thức thanh toán được hỗ trợ khi đặt hàng. Xem điều kiện bảo hành, đổi trả hoặc đặt lịch dịch vụ để được hỗ trợ sau mua.
               </Typography.Paragraph>
               <Space wrap>
                 <Link to="/pages/warranty-policy">Chính sách bảo hành</Link>
@@ -786,7 +873,7 @@ export const ProductDetailPage = () => {
         </Row>
       </section>
 
-      <section className="product-reviews-section">
+      <section id="product-reviews" className="product-reviews-section">
         <div className="section-heading product-reviews-heading">
           <div>
             <Typography.Title level={2}>Đánh giá từ khách hàng</Typography.Title>
@@ -932,7 +1019,7 @@ export const ProductDetailPage = () => {
             <div>
               <Typography.Title level={2}>Sản phẩm liên quan</Typography.Title>
               <Typography.Text type="secondary">
-                Các sản phẩm cùng danh mục được API gợi ý.
+                Thêm lựa chọn cùng danh mục dành cho bạn.
               </Typography.Text>
             </div>
           </div>
