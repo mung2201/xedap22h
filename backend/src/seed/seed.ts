@@ -2,6 +2,9 @@ import 'reflect-metadata';
 import * as bcrypt from 'bcrypt';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
+import { INestApplicationContext } from '@nestjs/common';
+import { getConnectionToken } from '@nestjs/mongoose';
+import { Connection } from 'mongoose';
 import { AppModule } from '../app.module';
 import { BrandsService } from '../brands/brands.service';
 import { CategoriesService } from '../categories/categories.service';
@@ -28,6 +31,7 @@ import { UsersService } from '../users/users.service';
 import { CreateVoucherDto } from '../vouchers/dto/create-voucher.dto';
 import { VouchersService } from '../vouchers/vouchers.service';
 import { VoucherDiscountType } from '../common/enums/commerce.enum';
+import { importSubmissionCatalog, prepareSubmissionCatalog } from './submission-catalog';
 
 interface SeedAccount {
   fullName: string;
@@ -496,18 +500,250 @@ const allProductDefinitions: SeedProductDefinition[] = [
   ...additionalAccessorySeedInputs.map(createAccessorySeed),
 ];
 
+async function seedDemoCatalog(
+  app: INestApplicationContext,
+  userIdByEmail: ReadonlyMap<string, string>,
+): Promise<void> {
+  const categoriesService = app.get(CategoriesService);
+  const brandsService = app.get(BrandsService);
+  const productsService = app.get(ProductsService);
+  const productQuestionsService = app.get(ProductQuestionsService);
+
+  const bicycles = await categoriesService.upsertForSeed({
+    name: 'Xe đạp',
+    slug: 'bicycles',
+    description: 'Danh mục các dòng xe đạp.',
+    sortOrder: 1,
+  });
+  const riderAccessories = await categoriesService.upsertForSeed({
+    name: 'Phụ kiện cho người đạp',
+    slug: 'accessories',
+    imageUrl: '/images/products/rider-gear-kit.png',
+    description: 'Trang phục và phụ kiện dành cho người đạp xe.',
+    sortOrder: 2,
+  });
+  const bikeAccessories = await categoriesService.upsertForSeed({
+    name: 'Phụ kiện cho xe',
+    slug: 'bike-accessories',
+    imageUrl: '/images/products/bike-accessories-kit.png',
+    description: 'Phụ kiện lắp thêm cho xe đạp.',
+    sortOrder: 3,
+  });
+  const bikeParts = await categoriesService.upsertForSeed({
+    name: 'Phụ tùng',
+    slug: 'bike-parts',
+    imageUrl: '/images/products/bike-parts-kit.png',
+    description: 'Linh kiện và phụ tùng thay thế cho xe đạp.',
+    sortOrder: 4,
+  });
+
+  const categoryDefinitions = [
+    { name: 'Xe đạp thể thao đường phố', slug: 'city-bike', parentCategory: bicycles._id.toString(), sortOrder: 1 },
+    { name: 'Xe đạp địa hình', slug: 'mountain-bike', parentCategory: bicycles._id.toString(), sortOrder: 2 },
+    { name: 'Xe đạp đua', slug: 'road-bike', parentCategory: bicycles._id.toString(), sortOrder: 3 },
+    { name: 'Xe đạp gấp', slug: 'folding-bikes', parentCategory: bicycles._id.toString(), sortOrder: 4 },
+    { name: 'Xe đạp nữ', slug: 'womens-bikes', parentCategory: bicycles._id.toString(), sortOrder: 5 },
+    { name: 'Xe đạp trẻ em', slug: 'kids-bikes', parentCategory: bicycles._id.toString(), sortOrder: 6 },
+    { name: 'Khung sườn', slug: 'framesets', parentCategory: bicycles._id.toString(), sortOrder: 7 },
+    { name: 'Xe đạp fixed gear', slug: 'fixed-gear-bikes', parentCategory: bicycles._id.toString(), sortOrder: 8 },
+
+    { name: 'Áo', slug: 'cycling-apparel', parentCategory: riderAccessories._id.toString(), sortOrder: 1 },
+    { name: 'Balo - túi', slug: 'bags', parentCategory: riderAccessories._id.toString(), sortOrder: 2 },
+    { name: 'Găng tay', slug: 'gloves', parentCategory: riderAccessories._id.toString(), sortOrder: 3 },
+    { name: 'Giày', slug: 'cycling-shoes', parentCategory: riderAccessories._id.toString(), sortOrder: 4 },
+    { name: 'Mắt kính', slug: 'cycling-glasses', parentCategory: riderAccessories._id.toString(), sortOrder: 5 },
+    { name: 'Nón bảo hiểm', slug: 'helmets', parentCategory: riderAccessories._id.toString(), sortOrder: 6 },
+    { name: 'Nón lưỡi trai', slug: 'caps', parentCategory: riderAccessories._id.toString(), sortOrder: 7 },
+    { name: 'Ống tay', slug: 'arm-sleeves', parentCategory: riderAccessories._id.toString(), sortOrder: 8 },
+    { name: 'Quần', slug: 'cycling-pants', parentCategory: riderAccessories._id.toString(), sortOrder: 9 },
+    { name: 'Vớ', slug: 'cycling-socks', parentCategory: riderAccessories._id.toString(), sortOrder: 10 },
+
+    { name: 'Baga - chắn bùn', slug: 'racks-fenders', parentCategory: bikeAccessories._id.toString(), sortOrder: 1 },
+    { name: 'Chân chống', slug: 'kickstands', parentCategory: bikeAccessories._id.toString(), sortOrder: 2 },
+    { name: 'Đèn', slug: 'lights', parentCategory: bikeAccessories._id.toString(), sortOrder: 3 },
+    { name: 'Chuông - còi', slug: 'bells-horns', parentCategory: bikeAccessories._id.toString(), sortOrder: 4 },
+    { name: 'Dây quấn - tay nắm', slug: 'handlebar-tape-grips', parentCategory: bikeAccessories._id.toString(), sortOrder: 5 },
+    { name: 'Gọng nước - bình nước', slug: 'bottles', parentCategory: bikeAccessories._id.toString(), sortOrder: 6 },
+    { name: 'Ghế trẻ em', slug: 'child-seats', parentCategory: bikeAccessories._id.toString(), sortOrder: 7 },
+    { name: 'Khóa', slug: 'locks', parentCategory: bikeAccessories._id.toString(), sortOrder: 8 },
+    { name: 'Ống bơm - phụ kiện bơm', slug: 'pumps-accessories', parentCategory: bikeAccessories._id.toString(), sortOrder: 9 },
+    { name: 'Túi sườn - túi yên', slug: 'frame-seat-bags', parentCategory: bikeAccessories._id.toString(), sortOrder: 10 },
+
+    { name: 'Bàn đạp', slug: 'components', parentCategory: bikeParts._id.toString(), sortOrder: 1 },
+    { name: 'Bánh - niềng xe', slug: 'wheels-rims', parentCategory: bikeParts._id.toString(), sortOrder: 2 },
+    { name: 'Chén cổ', slug: 'headsets', parentCategory: bikeParts._id.toString(), sortOrder: 3 },
+    { name: 'Củ đề', slug: 'derailleurs', parentCategory: bikeParts._id.toString(), sortOrder: 4 },
+    { name: 'Sản phẩm bảo dưỡng', slug: 'maintenance-products', parentCategory: bikeParts._id.toString(), sortOrder: 5 },
+    { name: 'Gôm thắng', slug: 'brake-pads', parentCategory: bikeParts._id.toString(), sortOrder: 6 },
+    { name: 'Ghi đông - pô tăng', slug: 'handlebars-stems', parentCategory: bikeParts._id.toString(), sortOrder: 7 },
+    { name: 'Sên', slug: 'chains', parentCategory: bikeParts._id.toString(), sortOrder: 8 },
+    { name: 'Vỏ - ruột xe', slug: 'tires-tubes', parentCategory: bikeParts._id.toString(), sortOrder: 9 },
+  ];
+  const categoryImageBySlug: Record<string, string> = {
+    'city-bike': '/images/products/city-bike-demo.png',
+    'mountain-bike': '/images/products/mountain-bike-demo.png',
+    'road-bike': '/images/products/road-bike-demo.png',
+    'folding-bikes': '/images/products/city-bike-demo.png',
+    'womens-bikes': '/images/products/city-bike-demo.png',
+    'kids-bikes': '/images/products/city-bike-demo.png',
+    framesets: '/images/products/road-bike-demo.png',
+    'fixed-gear-bikes': '/images/products/road-bike-demo.png',
+    'cycling-apparel': '/images/products/cycling-apparel-kit.png',
+    bags: '/images/products/rider-gear-kit.png',
+    gloves: '/images/products/rider-gear-kit.png',
+    'cycling-shoes': '/images/products/rider-gear-kit.png',
+    'cycling-glasses': '/images/products/rider-gear-kit.png',
+    helmets: '/images/products/rider-gear-kit.png',
+    caps: '/images/products/cycling-apparel-kit.png',
+    'arm-sleeves': '/images/products/cycling-apparel-kit.png',
+    'cycling-pants': '/images/products/cycling-apparel-kit.png',
+    'cycling-socks': '/images/products/cycling-apparel-kit.png',
+    'racks-fenders': '/images/products/bike-accessories-kit.png',
+    kickstands: '/images/products/bike-accessories-kit.png',
+    lights: '/images/products/bike-accessories-kit.png',
+    'bells-horns': '/images/products/bike-accessories-kit.png',
+    'handlebar-tape-grips': '/images/products/bike-accessories-kit.png',
+    bottles: '/images/products/bike-accessories-kit.png',
+    'child-seats': '/images/products/bike-accessories-kit.png',
+    locks: '/images/products/bike-accessories-kit.png',
+    'pumps-accessories': '/images/products/bike-accessories-kit.png',
+    'frame-seat-bags': '/images/products/bike-accessories-kit.png',
+    components: '/images/products/bike-parts-kit.png',
+    'wheels-rims': '/images/products/bike-parts-kit.png',
+    headsets: '/images/products/bike-parts-kit.png',
+    derailleurs: '/images/products/bike-parts-kit.png',
+    'maintenance-products': '/images/products/bike-parts-kit.png',
+    'brake-pads': '/images/products/bike-parts-kit.png',
+    'handlebars-stems': '/images/products/bike-parts-kit.png',
+    chains: '/images/products/bike-parts-kit.png',
+    'tires-tubes': '/images/products/bike-parts-kit.png',
+  };
+
+  const categoryBySlug = new Map<string, string>([
+    ['bicycles', bicycles._id.toString()],
+    ['accessories', riderAccessories._id.toString()],
+    ['bike-accessories', bikeAccessories._id.toString()],
+    ['bike-parts', bikeParts._id.toString()],
+  ]);
+
+  for (const categoryDefinition of categoryDefinitions) {
+    const category = await categoriesService.upsertForSeed({
+      ...categoryDefinition,
+      imageUrl: categoryImageBySlug[categoryDefinition.slug],
+    });
+    categoryBySlug.set(category.slug, category._id.toString());
+    console.log(`Seeded category: ${category.name}`);
+  }
+
+  const brandDefinitions = [
+    { name: 'Giant', slug: 'giant', website: 'https://www.giant-bicycles.com', sortOrder: 1 },
+    { name: 'Liv', slug: 'liv', website: 'https://www.liv-cycling.com', sortOrder: 2 },
+    { name: 'Momentum', slug: 'momentum', website: 'https://www.momentum-biking.com', sortOrder: 3 },
+    { name: 'Raptor', slug: 'raptor', sortOrder: 4 },
+    { name: 'Java', slug: 'java', sortOrder: 5 },
+    { name: 'Misaki', slug: 'misaki', sortOrder: 6 },
+    { name: 'Shimano', slug: 'shimano', website: 'https://bike.shimano.com', sortOrder: 7 },
+    { name: 'Trinx', slug: 'trinx', website: 'https://www.trinx.com', sortOrder: 8 },
+    { name: 'Active', slug: 'active', sortOrder: 9 },
+    { name: 'Trek', slug: 'trek', website: 'https://www.trekbikes.com', sortOrder: 10 },
+    { name: 'Cannondale', slug: 'cannondale', website: 'https://www.cannondale.com', sortOrder: 20 },
+    { name: 'Specialized', slug: 'specialized', website: 'https://www.specialized.com', sortOrder: 21 },
+    { name: 'Giro', slug: 'giro', website: 'https://www.giro.com', sortOrder: 22 },
+    { name: 'RockBros', slug: 'rockbros', website: 'https://www.rockbrosbike.com', sortOrder: 23 },
+    { name: 'Finish Line', slug: 'finish-line', website: 'https://www.finishlineusa.com', sortOrder: 24 },
+    { name: 'Maxxis', slug: 'maxxis', website: 'https://www.maxxis.com', sortOrder: 25 },
+  ];
+  const brandBySlug = new Map<string, string>();
+
+  for (const brandDefinition of brandDefinitions) {
+    const brand = await brandsService.upsertForSeed(brandDefinition);
+    brandBySlug.set(brand.slug, brand._id.toString());
+    console.log(`Seeded brand: ${brand.name}`);
+  }
+
+  const productIdBySku = new Map<string, string>();
+
+  for (const definition of allProductDefinitions) {
+    const { categorySlug, brandSlug, ...productInput } = definition;
+    const category = categoryBySlug.get(categorySlug);
+    const brand = brandBySlug.get(brandSlug);
+
+    if (!category || !brand) {
+      throw new Error(`Missing seed reference for ${definition.sku}.`);
+    }
+
+    const product = await productsService.upsertForSeed({
+      ...productInput,
+      category,
+      brand,
+    });
+    productIdBySku.set(product.sku, product.id);
+    console.log(`Seeded product: ${product.name}`);
+  }
+
+  const adminUserId = userIdByEmail.get('admin@example.com');
+  if (!adminUserId) {
+    throw new Error('Missing seeded administrator id.');
+  }
+
+  const productQuestionDefinitions = [
+    {
+      userEmail: 'customer1@example.com',
+      productSku: 'TREK-MARLIN-8-G3',
+      question:
+        'Xe nay co phu hop de di lam hang ngay va thinh thoang di duong dia hinh nhe khong?',
+      answer:
+        'Phu hop. Marlin 8 co tu the lai linh hoat cho di lai hang ngay va bo truyen dong ben bi cho cac cung duong dia hinh nhe. Ban nen doi chieu them size theo chieu cao truoc khi dat hang.',
+    },
+    {
+      userEmail: 'customer2@example.com',
+      productSku: 'GIANT-TALON-1-29',
+      question: 'Chieu cao 1m72 thi nen chon size nao cho mau xe nay?',
+      answer:
+        'Voi chieu cao 1m72, size M thuong se can bang. Ban co the dung cong cu Huong dan chon size hoac dat lich bike fitting de duoc can chinh ky hon.',
+    },
+    {
+      userEmail: 'customer3@example.com',
+      productSku: 'TREK-DOMANE-AL2-G4',
+      question: 'Xe co san nhung mau nao va co the lap them pedan khong?',
+      answer:
+        'Mau sac va ton kho hien thi theo tung bien the ngay tren trang san pham. Cua hang co the tu van va lap them pedan phu hop truoc khi giao xe neu ban co nhu cau.',
+    },
+  ];
+
+  for (const definition of productQuestionDefinitions) {
+    const userId = userIdByEmail.get(definition.userEmail);
+    const productId = productIdBySku.get(definition.productSku);
+
+    if (!userId || !productId) {
+      throw new Error(
+        `Missing seed reference for product question ${definition.productSku}.`,
+      );
+    }
+
+    const productQuestion = await productQuestionsService.upsertForSeed({
+      userId,
+      productId,
+      question: definition.question,
+      answer: definition.answer,
+      answeredById: adminUserId,
+    });
+    console.log(`Seeded product question: ${productQuestion.id}`);
+  }
+}
+
 async function seed(): Promise<void> {
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ['error', 'warn', 'log'],
   });
 
   try {
+    const connection = app.get<Connection>(getConnectionToken());
+    const submittedCatalog = process.argv.includes('--current-catalog')
+      ? await prepareSubmissionCatalog(connection)
+      : null;
     const configService = app.get(ConfigService);
     const usersService = app.get(UsersService);
-    const categoriesService = app.get(CategoriesService);
-    const brandsService = app.get(BrandsService);
-    const productsService = app.get(ProductsService);
-    const productQuestionsService = app.get(ProductQuestionsService);
     const vouchersService = app.get(VouchersService);
     const cmsService = app.get(CmsService);
     const chatbotService = app.get(ChatbotService);
@@ -567,226 +803,8 @@ async function seed(): Promise<void> {
       console.log(`Seeded ${user.role}: ${user.email}`);
     }
 
-    const bicycles = await categoriesService.upsertForSeed({
-      name: 'Xe đạp',
-      slug: 'bicycles',
-      description: 'Danh mục các dòng xe đạp.',
-      sortOrder: 1,
-    });
-    const riderAccessories = await categoriesService.upsertForSeed({
-      name: 'Phụ kiện cho người đạp',
-      slug: 'accessories',
-      imageUrl: '/images/products/rider-gear-kit.png',
-      description: 'Trang phục và phụ kiện dành cho người đạp xe.',
-      sortOrder: 2,
-    });
-    const bikeAccessories = await categoriesService.upsertForSeed({
-      name: 'Phụ kiện cho xe',
-      slug: 'bike-accessories',
-      imageUrl: '/images/products/bike-accessories-kit.png',
-      description: 'Phụ kiện lắp thêm cho xe đạp.',
-      sortOrder: 3,
-    });
-    const bikeParts = await categoriesService.upsertForSeed({
-      name: 'Phụ tùng',
-      slug: 'bike-parts',
-      imageUrl: '/images/products/bike-parts-kit.png',
-      description: 'Linh kiện và phụ tùng thay thế cho xe đạp.',
-      sortOrder: 4,
-    });
-
-    const categoryDefinitions = [
-      { name: 'Xe đạp thể thao đường phố', slug: 'city-bike', parentCategory: bicycles._id.toString(), sortOrder: 1 },
-      { name: 'Xe đạp địa hình', slug: 'mountain-bike', parentCategory: bicycles._id.toString(), sortOrder: 2 },
-      { name: 'Xe đạp đua', slug: 'road-bike', parentCategory: bicycles._id.toString(), sortOrder: 3 },
-      { name: 'Xe đạp gấp', slug: 'folding-bikes', parentCategory: bicycles._id.toString(), sortOrder: 4 },
-      { name: 'Xe đạp nữ', slug: 'womens-bikes', parentCategory: bicycles._id.toString(), sortOrder: 5 },
-      { name: 'Xe đạp trẻ em', slug: 'kids-bikes', parentCategory: bicycles._id.toString(), sortOrder: 6 },
-      { name: 'Khung sườn', slug: 'framesets', parentCategory: bicycles._id.toString(), sortOrder: 7 },
-      { name: 'Xe đạp fixed gear', slug: 'fixed-gear-bikes', parentCategory: bicycles._id.toString(), sortOrder: 8 },
-
-      { name: 'Áo', slug: 'cycling-apparel', parentCategory: riderAccessories._id.toString(), sortOrder: 1 },
-      { name: 'Balo - túi', slug: 'bags', parentCategory: riderAccessories._id.toString(), sortOrder: 2 },
-      { name: 'Găng tay', slug: 'gloves', parentCategory: riderAccessories._id.toString(), sortOrder: 3 },
-      { name: 'Giày', slug: 'cycling-shoes', parentCategory: riderAccessories._id.toString(), sortOrder: 4 },
-      { name: 'Mắt kính', slug: 'cycling-glasses', parentCategory: riderAccessories._id.toString(), sortOrder: 5 },
-      { name: 'Nón bảo hiểm', slug: 'helmets', parentCategory: riderAccessories._id.toString(), sortOrder: 6 },
-      { name: 'Nón lưỡi trai', slug: 'caps', parentCategory: riderAccessories._id.toString(), sortOrder: 7 },
-      { name: 'Ống tay', slug: 'arm-sleeves', parentCategory: riderAccessories._id.toString(), sortOrder: 8 },
-      { name: 'Quần', slug: 'cycling-pants', parentCategory: riderAccessories._id.toString(), sortOrder: 9 },
-      { name: 'Vớ', slug: 'cycling-socks', parentCategory: riderAccessories._id.toString(), sortOrder: 10 },
-
-      { name: 'Baga - chắn bùn', slug: 'racks-fenders', parentCategory: bikeAccessories._id.toString(), sortOrder: 1 },
-      { name: 'Chân chống', slug: 'kickstands', parentCategory: bikeAccessories._id.toString(), sortOrder: 2 },
-      { name: 'Đèn', slug: 'lights', parentCategory: bikeAccessories._id.toString(), sortOrder: 3 },
-      { name: 'Chuông - còi', slug: 'bells-horns', parentCategory: bikeAccessories._id.toString(), sortOrder: 4 },
-      { name: 'Dây quấn - tay nắm', slug: 'handlebar-tape-grips', parentCategory: bikeAccessories._id.toString(), sortOrder: 5 },
-      { name: 'Gọng nước - bình nước', slug: 'bottles', parentCategory: bikeAccessories._id.toString(), sortOrder: 6 },
-      { name: 'Ghế trẻ em', slug: 'child-seats', parentCategory: bikeAccessories._id.toString(), sortOrder: 7 },
-      { name: 'Khóa', slug: 'locks', parentCategory: bikeAccessories._id.toString(), sortOrder: 8 },
-      { name: 'Ống bơm - phụ kiện bơm', slug: 'pumps-accessories', parentCategory: bikeAccessories._id.toString(), sortOrder: 9 },
-      { name: 'Túi sườn - túi yên', slug: 'frame-seat-bags', parentCategory: bikeAccessories._id.toString(), sortOrder: 10 },
-
-      { name: 'Bàn đạp', slug: 'components', parentCategory: bikeParts._id.toString(), sortOrder: 1 },
-      { name: 'Bánh - niềng xe', slug: 'wheels-rims', parentCategory: bikeParts._id.toString(), sortOrder: 2 },
-      { name: 'Chén cổ', slug: 'headsets', parentCategory: bikeParts._id.toString(), sortOrder: 3 },
-      { name: 'Củ đề', slug: 'derailleurs', parentCategory: bikeParts._id.toString(), sortOrder: 4 },
-      { name: 'Sản phẩm bảo dưỡng', slug: 'maintenance-products', parentCategory: bikeParts._id.toString(), sortOrder: 5 },
-      { name: 'Gôm thắng', slug: 'brake-pads', parentCategory: bikeParts._id.toString(), sortOrder: 6 },
-      { name: 'Ghi đông - pô tăng', slug: 'handlebars-stems', parentCategory: bikeParts._id.toString(), sortOrder: 7 },
-      { name: 'Sên', slug: 'chains', parentCategory: bikeParts._id.toString(), sortOrder: 8 },
-      { name: 'Vỏ - ruột xe', slug: 'tires-tubes', parentCategory: bikeParts._id.toString(), sortOrder: 9 },
-    ];
-    const categoryImageBySlug: Record<string, string> = {
-      'city-bike': '/images/products/city-bike-demo.png',
-      'mountain-bike': '/images/products/mountain-bike-demo.png',
-      'road-bike': '/images/products/road-bike-demo.png',
-      'folding-bikes': '/images/products/city-bike-demo.png',
-      'womens-bikes': '/images/products/city-bike-demo.png',
-      'kids-bikes': '/images/products/city-bike-demo.png',
-      framesets: '/images/products/road-bike-demo.png',
-      'fixed-gear-bikes': '/images/products/road-bike-demo.png',
-      'cycling-apparel': '/images/products/cycling-apparel-kit.png',
-      bags: '/images/products/rider-gear-kit.png',
-      gloves: '/images/products/rider-gear-kit.png',
-      'cycling-shoes': '/images/products/rider-gear-kit.png',
-      'cycling-glasses': '/images/products/rider-gear-kit.png',
-      helmets: '/images/products/rider-gear-kit.png',
-      caps: '/images/products/cycling-apparel-kit.png',
-      'arm-sleeves': '/images/products/cycling-apparel-kit.png',
-      'cycling-pants': '/images/products/cycling-apparel-kit.png',
-      'cycling-socks': '/images/products/cycling-apparel-kit.png',
-      'racks-fenders': '/images/products/bike-accessories-kit.png',
-      kickstands: '/images/products/bike-accessories-kit.png',
-      lights: '/images/products/bike-accessories-kit.png',
-      'bells-horns': '/images/products/bike-accessories-kit.png',
-      'handlebar-tape-grips': '/images/products/bike-accessories-kit.png',
-      bottles: '/images/products/bike-accessories-kit.png',
-      'child-seats': '/images/products/bike-accessories-kit.png',
-      locks: '/images/products/bike-accessories-kit.png',
-      'pumps-accessories': '/images/products/bike-accessories-kit.png',
-      'frame-seat-bags': '/images/products/bike-accessories-kit.png',
-      components: '/images/products/bike-parts-kit.png',
-      'wheels-rims': '/images/products/bike-parts-kit.png',
-      headsets: '/images/products/bike-parts-kit.png',
-      derailleurs: '/images/products/bike-parts-kit.png',
-      'maintenance-products': '/images/products/bike-parts-kit.png',
-      'brake-pads': '/images/products/bike-parts-kit.png',
-      'handlebars-stems': '/images/products/bike-parts-kit.png',
-      chains: '/images/products/bike-parts-kit.png',
-      'tires-tubes': '/images/products/bike-parts-kit.png',
-    };
-
-    const categoryBySlug = new Map<string, string>([
-      ['bicycles', bicycles._id.toString()],
-      ['accessories', riderAccessories._id.toString()],
-      ['bike-accessories', bikeAccessories._id.toString()],
-      ['bike-parts', bikeParts._id.toString()],
-    ]);
-
-    for (const categoryDefinition of categoryDefinitions) {
-      const category = await categoriesService.upsertForSeed({
-        ...categoryDefinition,
-        imageUrl: categoryImageBySlug[categoryDefinition.slug],
-      });
-      categoryBySlug.set(category.slug, category._id.toString());
-      console.log(`Seeded category: ${category.name}`);
-    }
-
-    const brandDefinitions = [
-      { name: 'Giant', slug: 'giant', website: 'https://www.giant-bicycles.com', sortOrder: 1 },
-      { name: 'Liv', slug: 'liv', website: 'https://www.liv-cycling.com', sortOrder: 2 },
-      { name: 'Momentum', slug: 'momentum', website: 'https://www.momentum-biking.com', sortOrder: 3 },
-      { name: 'Raptor', slug: 'raptor', sortOrder: 4 },
-      { name: 'Java', slug: 'java', sortOrder: 5 },
-      { name: 'Misaki', slug: 'misaki', sortOrder: 6 },
-      { name: 'Shimano', slug: 'shimano', website: 'https://bike.shimano.com', sortOrder: 7 },
-      { name: 'Trinx', slug: 'trinx', website: 'https://www.trinx.com', sortOrder: 8 },
-      { name: 'Active', slug: 'active', sortOrder: 9 },
-      { name: 'Trek', slug: 'trek', website: 'https://www.trekbikes.com', sortOrder: 10 },
-      { name: 'Cannondale', slug: 'cannondale', website: 'https://www.cannondale.com', sortOrder: 20 },
-      { name: 'Specialized', slug: 'specialized', website: 'https://www.specialized.com', sortOrder: 21 },
-      { name: 'Giro', slug: 'giro', website: 'https://www.giro.com', sortOrder: 22 },
-      { name: 'RockBros', slug: 'rockbros', website: 'https://www.rockbrosbike.com', sortOrder: 23 },
-      { name: 'Finish Line', slug: 'finish-line', website: 'https://www.finishlineusa.com', sortOrder: 24 },
-      { name: 'Maxxis', slug: 'maxxis', website: 'https://www.maxxis.com', sortOrder: 25 },
-    ];
-    const brandBySlug = new Map<string, string>();
-
-    for (const brandDefinition of brandDefinitions) {
-      const brand = await brandsService.upsertForSeed(brandDefinition);
-      brandBySlug.set(brand.slug, brand._id.toString());
-      console.log(`Seeded brand: ${brand.name}`);
-    }
-
-    const productIdBySku = new Map<string, string>();
-
-    for (const definition of allProductDefinitions) {
-      const { categorySlug, brandSlug, ...productInput } = definition;
-      const category = categoryBySlug.get(categorySlug);
-      const brand = brandBySlug.get(brandSlug);
-
-      if (!category || !brand) {
-        throw new Error(`Missing seed reference for ${definition.sku}.`);
-      }
-
-      const product = await productsService.upsertForSeed({
-        ...productInput,
-        category,
-        brand,
-      });
-      productIdBySku.set(product.sku, product.id);
-      console.log(`Seeded product: ${product.name}`);
-    }
-
-    const adminUserId = userIdByEmail.get('admin@example.com');
-    if (!adminUserId) {
-      throw new Error('Missing seeded administrator id.');
-    }
-
-    const productQuestionDefinitions = [
-      {
-        userEmail: 'customer1@example.com',
-        productSku: 'TREK-MARLIN-8-G3',
-        question:
-          'Xe nay co phu hop de di lam hang ngay va thinh thoang di duong dia hinh nhe khong?',
-        answer:
-          'Phu hop. Marlin 8 co tu the lai linh hoat cho di lai hang ngay va bo truyen dong ben bi cho cac cung duong dia hinh nhe. Ban nen doi chieu them size theo chieu cao truoc khi dat hang.',
-      },
-      {
-        userEmail: 'customer2@example.com',
-        productSku: 'GIANT-TALON-1-29',
-        question: 'Chieu cao 1m72 thi nen chon size nao cho mau xe nay?',
-        answer:
-          'Voi chieu cao 1m72, size M thuong se can bang. Ban co the dung cong cu Huong dan chon size hoac dat lich bike fitting de duoc can chinh ky hon.',
-      },
-      {
-        userEmail: 'customer3@example.com',
-        productSku: 'TREK-DOMANE-AL2-G4',
-        question: 'Xe co san nhung mau nao va co the lap them pedan khong?',
-        answer:
-          'Mau sac va ton kho hien thi theo tung bien the ngay tren trang san pham. Cua hang co the tu van va lap them pedan phu hop truoc khi giao xe neu ban co nhu cau.',
-      },
-    ];
-
-    for (const definition of productQuestionDefinitions) {
-      const userId = userIdByEmail.get(definition.userEmail);
-      const productId = productIdBySku.get(definition.productSku);
-
-      if (!userId || !productId) {
-        throw new Error(
-          `Missing seed reference for product question ${definition.productSku}.`,
-        );
-      }
-
-      const productQuestion = await productQuestionsService.upsertForSeed({
-        userId,
-        productId,
-        question: definition.question,
-        answer: definition.answer,
-        answeredById: adminUserId,
-      });
-      console.log(`Seeded product question: ${productQuestion.id}`);
+    if (!submittedCatalog) {
+      await seedDemoCatalog(app, userIdByEmail);
     }
 
     const now = new Date();
@@ -1026,6 +1044,9 @@ Bạn cũng có thể gửi yêu cầu qua tài khoản mua hàng, đội ngũ c
     for (const faqDefinition of faqDefinitions) {
       const faq = await chatbotService.upsertForSeed(faqDefinition);
       console.log(`Seeded FAQ: ${faq.question}`);
+    }
+    if (submittedCatalog) {
+      await importSubmissionCatalog(connection, submittedCatalog);
     }
   } finally {
     await app.close();

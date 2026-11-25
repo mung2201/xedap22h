@@ -10,6 +10,7 @@
     "start:dev": "npm run build && node dist/main.js",
     "typecheck": "tsc --noEmit",
     "seed": "npm run build && node dist/seed/seed.js",
+    "seed:catalog": "npm run build && node dist/seed/seed.js --current-catalog",
     "demo:payment-product": "npm run build && node dist/demo/create-payment-demo-product.js",
     "test": "npm run build && node --test test/*.test.cjs",
     "test:e2e": "npm run build && node test/e2e/run.cjs"
